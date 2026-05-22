@@ -1,4 +1,4 @@
-// Workload maestro de las máquinas
+# Workload maestro de las máquinas
 const WORKLOAD_MAESTRO = {
   "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
   "906": 0.3289, "907": 0.3217, "911": 0.1821, "916": 0.3868,
