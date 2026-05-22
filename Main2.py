@@ -23,8 +23,8 @@ function calcularDistancia(m1, m2) {
 function optimizarTurno() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   
-  // Supongamos que en las columnas A (Máquina), B (Activa: SI/NO), C (Asignación Manual) están tus inputs
-  // Leemos los datos de la hoja (Filas 2 a 15 por ejemplo)
+ #  Supongamos que en las columnas A (Máquina), B (Activa: SI/NO), C (Asignación Manual) están tus inputs
+#  Leemos los datos de la hoja (Filas 2 a 15 por ejemplo)
   const rangoDatos = sheet.getRange("A2:C15").getValues();
   
   let maquinasActivas = [];
@@ -43,14 +43,14 @@ function optimizarTurno() {
     }
   });
   
-  // Algoritmo de asignación efiente
+#  Algoritmo de asignación efiente
   let maquinasPorAsignar = maquinasActivas.filter(m => !asignacionesManuales[m]);
-  // Ordenar por carga descendente para asegurar eficiencia en el empaquetado
+#  Ordenar por carga descendente para asegurar eficiencia en el empaquetado
   maquinasPorAsignar.sort((a, b) => (WORKLOAD_MAESTRO[b] || 0) - (WORKLOAD_MAESTRO[a] || 0));
   
   let operarios = {};
   
-  // Forzar asignaciones manuales primero
+#  Forzar asignaciones manuales primero
   for (let m in asignacionesManuales) {
     let op = asignacionesManuales[m];
     if (!operarios[op]) operarios[op] = { maquinas: [], carga: 0 };
@@ -71,7 +71,7 @@ function optimizarTurno() {
     operarios[opActual].maquinas.push(pivote);
     operarios[opActual].carga += WORKLOAD_MAESTRO[pivote];
     
-    // Buscar la más cercana que quepa por debajo del 97%
+#  Buscar la más cercana que quepa por debajo del 97%
     let continuar = true;
     while (continuar) {
       let mejorIdx = -1;
@@ -82,7 +82,7 @@ function optimizarTurno() {
         let cargaM = WORKLOAD_MAESTRO[m] || 0;
         
         if (operarios[opActual].carga + cargaM <= 0.97) {
-          // Distancia media a las que ya tiene el operario
+          #  Distancia media a las que ya tiene el operario
           let distAcum = 0;
           operarios[opActual].maquinas.forEach(yaAsig => {
             distAcum += calcularDistancia(m, yaAsig);
@@ -107,8 +107,8 @@ function optimizarTurno() {
     opIdx++;
   }
   
-  // Imprimir los resultados de vuelta en la hoja (por ejemplo, en la columna E y F)
-  sheet.getRange("E2:F20").clearContent(); // Limpiar salidas anteriores
+  #  Imprimir los resultados de vuelta en la hoja (por ejemplo, en la columna E y F)
+  sheet.getRange("E2:F20").clearContent(); #  Limpiar salidas anteriores
   let filaSalida = 2;
   sheet.getRange(1, 5).setValue("Operario");
   sheet.getRange(1, 6).setValue("Asignación Máquinas (% Carga)");
