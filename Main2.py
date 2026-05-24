@@ -5,8 +5,9 @@ import os
 from datetime import datetime
 
 # -------------------------------------------------------------------------
-# 1. CONFIGURACIÓN Y ARCHIVOS DE MEMORIA (MACHINE LEARNING)
+# 1. BASE DE DATOS MAESTRA (WORKLOAD Y METRIZ DE DISTANCIAS EN METROS)
 # -------------------------------------------------------------------------
+MAX_SATURACION = 0.97  # Límite estricto solicitado
 META_SATURACION = 0.90
 HISTORICO_ASIGNACIONES = "historico_planes.csv"
 MEMORIA_ML = "memoria_aprendizaje.csv"
@@ -21,7 +22,7 @@ WORKLOAD_MAESTRO = {
 MATRIZ_DISTANCIAS = {
     "902": {"902":0, "903":7, "904":23, "905":9, "906":4, "907":8, "911":25, "916":21, "917":41, "922":21, "923":27, "924":15, "925":12, "926":26, "927":6, "928":40},
     "903": {"902":7, "903":0, "904":27, "905":10, "906":8, "907":8.5, "911":20, "916":26, "917":48, "922":21, "923":26, "924":12, "925":15, "926":20, "927":11, "928":47},
-    "904": {"902":23, "903":27, "904":0, "905":39, "906":26, "907":29, "911":44, "916":3, "917":23, "922":43, "923":13, "924":24, "925":42, "926":45, "927":15, "928":21},
+    "904": {"902":23, "903":27, "904":0, "905":39, "906":26, "907":29, "911":44, "916":3, "917":27, "922":43, "923":13, "924":24, "925":42, "926":45, "927":15, "928":21},
     "905": {"902":9, "903":10, "904":39, "905":0, "906":12, "907":10, "911":9, "916":28, "917":50, "922":12, "923":28, "924":18, "925":3, "926":6, "927":18, "928":35},
     "906": {"902":4, "903":8, "904":26, "905":12, "906":0, "907":2, "911":20, "916":23, "917":49, "922":19, "923":36, "924":20, "925":18, "926":21, "927":12, "928":37},
     "907": {"902":8, "903":8.5, "904":29, "905":10, "906":2, "907":0, "911":18, "916":25, "917":51, "922":17, "923":38, "924":22, "925":16, "926":19, "927":14, "928":39},
@@ -38,208 +39,178 @@ MATRIZ_DISTANCIAS = {
 }
 
 def cargar_penalizaciones_ml():
-    """Carga los errores del histórico para penalizar distancias (Aprendizaje)."""
-    penalizaciones = {}
     if os.path.exists(MEMORIA_ML):
         try:
             df = pd.read_csv(MEMORIA_ML)
-            # Solo penalizar si fue por error de distancia o coherencia
-            df_errores = df[df["motivo"].str.contains("distancias|coherencia", case=False, na=False)]
-            for _, fila in df_errores.iterrows():
-                m = str(fila["maquina"])
-                if m not in penalizaciones:
-                    penalizaciones[m] = 50.0  # Añade una barrera virtual de 50 metros artificiales
-        except Exception:
-            pass
-    return penalizaciones
+            df_err = df[df["motivo"].str.contains("distancias|coherencia", case=False, na=False)]
+            return {str(row["maquina"]): 40.0 for _, row in df_err.iterrows()}
+        except: pass
+    return {}
 
 def registrar_evento_ml(maquina, motivo, operario):
-    """Guarda en caliente el motivo de la asignación manual para entrenar al modelo."""
-    nuevo_registro = pd.DataFrame([{
-        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "maquina": maquina,
-        "motivo": motivo,
-        "operario_forzado": operario
-    }])
-    if not os.path.exists(MEMORIA_ML):
-        nuevo_registro.to_csv(MEMORIA_ML, index=False)
-    else:
-        nuevo_registro.to_csv(MEMORIA_ML, mode='a', header=False, index=False)
-
-def guardar_historico_impresion(plan_texto):
-    """Guarda el plan definitivo en el historial de la planta al pulsar imprimir."""
-    nuevo_plan = pd.DataFrame([{
-        "fecha_impresion": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "detalle_plan": plan_texto.replace('\n', ' | ')
-    }])
-    if not os.path.exists(HISTORICO_ASIGNACIONES):
-        nuevo_plan.to_csv(HISTORICO_ASIGNACIONES, index=False)
-    else:
-        nuevo_plan.to_csv(HISTORICO_ASIGNACIONES, mode='a', header=False, index=False)
+    nuevo = pd.DataFrame([{"fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "maquina": maquina, "motivo": motivo, "operario": operario}])
+    nuevo.to_csv(MEMORIA_ML, mode='a', header=not os.path.exists(MEMORIA_ML), index=False)
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO CON APRENDIZAJE POR RETROALIMENTACIÓN
+# 2. ALGORITMO OPTIMIZADO CON TOPE ESTRICTO DEL 97%
 # -------------------------------------------------------------------------
 def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
     operarios = {}
     maquinas_por_asignar = []
-    
-    # Cargar el Machine Learning (Barreras lógicas aprendidas de turnos pasados)
     barreras_ml = cargar_penalizaciones_ml()
 
-    # Fase 1: Asignaciones forzadas y máquinas críticas al 100%
+    # REGLA EXCEPCIÓN: Máquinas forzadas o con carga >= 100% nativa (Ej: 924, 917)
     for m in maquinas_activas:
         carga_m = WORKLOAD_MAESTRO.get(m, 0)
         if m in asignaciones_manuales:
             op_id = asignaciones_manuales[m]
-            if op_id not in operarios:
-                operarios[op_id] = {"maquinas": [], "carga_total": 0.0}
+            if op_id not in operarios: operarios[op_id] = {"maquinas": [], "carga_total": 0.0}
             operarios[op_id]["maquinas"].append(m)
             operarios[op_id]["carga_total"] += carga_m
         elif carga_m >= 1.00:
-            op_dedicado = f"Operario Dedicado {m}"
-            operarios[op_dedicado] = {"maquinas": [m], "carga_total": carga_m}
+            operarios[f"Operario Dedicado {m}"] = {"maquinas": [m], "carga_total": carga_m}
         else:
             maquinas_por_asignar.append(m)
 
-    # Ordenar combinando Prioridad de Negocio y volumen de carga
     maquinas_por_asignar.sort(key=lambda x: (prioridades.get(x, 2), -WORKLOAD_MAESTRO.get(x, 0)))
-
     nuevo_op_idx = 1
-    while f"Operario {nuevo_op_idx}" in operarios:
-        nuevo_op_idx += 1
 
-    # Fase 2: Reparto dinámico inteligente (Matriz + Penalización Inteligente)
     while len(maquinas_por_asignar) > 0:
         op_actual = f"Operario {nuevo_op_idx}"
-        if op_actual not in operarios:
-            operarios[op_actual] = {"maquinas": [], "carga_total": 0.0}
+        while op_actual in operarios:
+            nuevo_op_idx += 1
+            op_actual = f"Operario {nuevo_op_idx}"
 
+        operarios[op_actual] = {"maquinas": [], "carga_total": 0.0}
         maquina_pivote = maquinas_por_asignar.pop(0)
         operarios[op_actual]["maquinas"].append(maquina_pivote)
-        operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO.get(maquina_pivote, 0)
+        operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO[maquina_pivote]
 
-        while operarios[op_actual]["carga_total"] < META_SATURACION and len(maquinas_por_asignar) > 0:
+        # Agregar compañeros sin violar jamás el 97% max de saturación
+        while len(maquinas_por_asignar) > 0:
             candidatas = []
             for m in maquinas_por_asignar:
-                carga_m = WORKLOAD_MAESTRO.get(m, 0)
-                
-                # Calcular distancia base en metros
-                dist_base = np.mean([
-                    MATRIZ_DISTANCIAS.get(m, {}).get(ya_asig, 15.0)
-                    for ya_asig in operarios[op_actual]["maquinas"]
-                ])
-                
-                # APLICACIÓN DEL MACHINE LEARNING: Si esta máquina provocó un error antes,
-                # se le añade una penalización artificial de distancia para alejarla del grupo.
-                penalizacion_ai = barreras_ml.get(m, 0.0)
-                dist_final_ajustada = dist_base + penalizacion_ai
-                
-                candidatas.append((m, dist_final_ajustada, carga_m))
+                carga_m = WORKLOAD_MAESTRO[m]
+                if operarios[op_actual]["carga_total"] + carga_m <= MAX_SATURACION:
+                    dist_base = np.mean([MATRIZ_DISTANCIAS.get(m, {}).get(y, 15.0) for y in operarios[op_actual]["maquinas"]])
+                    candidatas.append((m, dist_base + barreras_ml.get(m, 0.0), carga_m))
 
+            if not candidatas: break
             candidatas.sort(key=lambda x: x[1])
-            mejor_maquina, _, mejor_carga = candidatas[0]
-
-            operarios[op_actual]["maquinas"].append(mejor_maquina)
-            operarios[op_actual]["carga_total"] += mejor_carga
-            maquinas_por_asignar.remove(mejor_maquina)
-
+            mejor_m, _, mejor_c = candidatas[0]
+            
+            operarios[op_actual]["maquinas"].append(mejor_m)
+            operarios[op_actual]["carga_total"] += mejor_c
+            maquinas_por_asignar.remove(mejor_m)
         nuevo_op_idx += 1
 
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ GRÁFICA AVANZADA (STREAMLIT)
+# 3. INTERFAZ GRÁFICA CORREGIDA (PROPUESTA PRIMERO + ESTILOS BRANDING)
 # -------------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Planificador Inteligente ML")
-st.title("🏭 Planificador Autónomo con Auto-Aprendizaje (ML)")
-st.markdown("El sistema aprende de tus asignaciones manuales para corregir su lógica de proximidad.")
+st.set_page_config(layout="wide", page_title="Planificador Corporativo")
+
+# Inyección de estilos de la paleta de colores de la empresa
+st.markdown("""
+    <style>
+        .reportview-container { background-color: #f4f6f9; }
+        .stMetric { background-color: #ffffff; padding: 15px; border-radius: 8px; border-left: 5px solid #1d3557; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        h1, h2, h3 { color: #1d3557 !important; font-family: 'Arial Black', Gadget, sans-serif; }
+        div.stButton > button:first-child { background-color: #e63946 !important; color: white !important; font-weight: bold; border-radius: 6px; }
+    </style>
+""", unsafe_with_html=True)
+
+st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
+st.markdown("---")
 
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
-st.subheader("🛠️ 1. Estado de la Planta")
+# REQUERIMIENTO CENTRAL: SE DESPLIEGAN PRIMERO LOS RESULTADOS GENERADOS
+st.header("🚀 1. Propuesta Automática de Distribución del Turno")
+
+# Variables temporales para la inicialización ordenada
+asignaciones_manuales = {}
+prioridades = {m: 2 for m in st.session_state.maquinas_activas}
+
+if st.session_state.maquinas_activas:
+    resultado = optimizar_asignacion(st.session_state.maquinas_activas, asignaciones_manuales, prioridades)
+    resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
+    
+    # KPIs visuales superiores
+    k1, k2, k3 = st.columns(3)
+    k1.metric("👤 Operarios Requeridos", len(resultado))
+    k2.metric("🏭 Inyectoras en Marcha", len(st.session_state.maquinas_activas))
+    c_med = np.mean([v["carga_total"] for v in resultado.values()]) * 100
+    k3.metric("📊 Saturación Media", f"{c_med:.1f}%")
+
+    # Renderizado de Tarjetas de Operarios alineadas
+    st.write(" ")
+    cols_res = st.columns(min(len(resultado), 4))
+    
+    # Construcción estructurada del Layout HTML para la impresión impecable
+    html_print = """<html><head><style>
+        body { font-family: Arial, sans-serif; color: #333; margin: 20px; }
+        .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; }
+        .title { font-size: 20pt; font-weight: bold; color: #1d3557; }
+        .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; }
+        .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; }
+        .card-b { padding: 12px; }
+        .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }
+    </style></head><body>
+    <div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>
+    """
+
+    for idx, (operario, datos) in enumerate(sorted(resultado.items())):
+        sat_p = datos['carga_total'] * 100
+        color_borde = "#e63946" if sat_p > 97.0 else "#1d3557"
+        
+        # Guardar en layout de impresión HTML
+        html_print += f"<div class='card'><div class='card-h'>{operario} <span class='badge'>{sat_p:.1f}% Carga</span></div><div class='card-b'><ul>"
+        
+        with cols_res[idx % 4]:
+            st.markdown(f"""
+                <div style='background-color: #f8fafc; border: 1px solid #cbd5e1; border-top: 5px solid {color_borde}; padding: 15px; border-radius: 6px; margin-bottom: 10px;'>
+                    <h4 style='margin:0; color:#1d3557;'>👤 {operario}</h4>
+                    <p style='margin:5px 0; font-size:15px;'><b>Carga:</b> <code style='color:#e63946;'>{sat_p:.1f}%</code></p>
+                    <hr style='margin:8px 0; border:0; border-top:1px solid #e2e8f0;'>
+            """, unsafe_with_html=True)
+            
+            for m in datos["maquinas"]:
+                st.write(f"• **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
+                html_print += f"<li>Máquina {m} ({WORKLOAD_MAESTRO[m]*100:.1f}% Workload)</li>"
+            st.markdown("</div>", unsafe_with_html=True)
+        html_print += "</ul></div></div>"
+    html_print += "</body></html>"
+
+    # BOTÓN DE IMPRESIÓN DIRECTA CON FORMATO ESTILIZADO ALINEADO
+    st.write(" ")
+    st.download_button(
+        label="🖨️ Imprimir / Guardar Reporte del Turno (Layout Web)",
+        data=html_print,
+        file_name=f"Plan_Turno_{datetime.now().strftime('%d%M%Y')}.html",
+        mime="text/html"
+    )
+
+# --- CONFIGURACIONES MOVIDAS AL FONDO DE LA PÁGINA ---
+st.write("---")
+st.header("⚙️ 2. Panel de Ajuste y Configuración de Planta")
+
 st.session_state.maquinas_activas = st.multiselect(
-    "Selecciona las máquinas que van a trabajar en este turno:",
+    "Modifique las máquinas activas en producción:",
     options=list(WORKLOAD_MAESTRO.keys()),
     default=st.session_state.maquinas_activas
 )
 
-st.write("---")
-st.subheader("📋 2. Ajustes Manuales y Entrenamiento del Machine Learning")
-
-asignaciones_manuales = {}
-prioridades = {}
-
+st.subheader("🔒 Forzar Asignación Manual y Feedback ML")
 if st.session_state.maquinas_activas:
-    columnas_tabla = st.columns(3)
+    col_tab = st.columns(3)
     for idx, m in enumerate(sorted(st.session_state.maquinas_activas)):
-        col_seleccionada = columnas_tabla[idx % 3]
-        with col_seleccionada:
-            carga_p = WORKLOAD_MAESTRO[m] * 100
-            with st.expander(f"📦 Máquina {m} ({carga_p:.1f}%)", expanded=True):
-                prioridades[m] = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_{m}")
-                prioridades[m] = {"Alta": 1, "Media": 2, "Baja": 3}[prioridades[m]]
-                
-                op_manual = st.text_input("Asignar a un operario fijo:", value="", key=f"m_{m}", placeholder="Ej: Operario 1")
-                
-                if op_manual.strip():
-                    asignaciones_manuales[m] = op_manual.strip()
-                    
-                    # DESPLIEGUE INMEDIATO DE MOTIVOS REQUERIDOS POR EL USUARIO
-                    motivo = st.radio(
-                        f"Motivo del cambio en Máq. {m}:",
-                        options=[
-                            "Asignacion por condiciones del proceso",
-                            "Error de asignacion por distancias",
-                            "Error de asignacion baja saturacion",
-                            "Error de asignacion por coherencia"
-                        ],
-                        key=f"motivo_{m}"
-                    )
-                    # Guardar la retroalimentación en caliente para entrenar el algoritmo
-                    registrar_evento_ml(m, motivo, op_manual.strip())
-
-    # Procesar optimización
-    st.write("---")
-    st.subheader("🚀 3. Distribución Óptima de Turno Propuesta")
-    
-    resultado = optimizar_asignacion(st.session_state.maquinas_activas, asignaciones_manuales, prioridades)
-    resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
-    num_operarios = len(resultado)
-
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric(label="👤 Operarios Mínimos", value=num_operarios)
-    kpi2.metric(label="🏭 Máquinas Activas", value=len(st.session_state.maquinas_activas))
-    carga_media = np.mean([v["carga_total"] for v in resultado.values()]) * 100
-    kpi3.metric(label="📊 Saturación Media Obtenida", value=f"{carga_media:.2f}%")
-
-    texto_impresion = f"REPARTO DE TURNO - GENERADO EL {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-    texto_impresion += "==============================================================\n"
-    
-    cols_resultado = st.columns(min(num_operarios, 4))
-    for idx, (operario, datos) in enumerate(sorted(resultado.items())):
-        sat_porc = datos['carga_total'] * 100
-        texto_impresion += f"{operario} ({sat_porc:.1f}% Carga) -> Maquinas: {', '.join(datos['maquinas'])}\n"
-        
-        with cols_resultado[idx % 4]:
-            st.success(f"### {operario}")
-            st.metric(label="Carga total", value=f"{sat_porc:.1f}%")
-            for m in datos["maquinas"]:
-                tipo = "🔒 Manual" if m in asignaciones_manuales else "🤖 IA"
-                st.write(f"- **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%) - {tipo}")
-                
-    st.write("---")
-    
-    # ACCIÓN COMBINADA: Descarga el archivo de impresión y guarda el log histórico en el servidor
-    if st.download_button(
-        label="🖨️ Descargar e Imprimir Plan de Trabajo",
-        data=texto_impresion,
-        file_name="plan_turno_inyectoras.txt",
-        mime="text/plain"
-    ):
-        guardar_historico_impresion(texto_impresion)
-        st.toast("✅ ¡Plan guardado con éxito en el histórico de la planta!")
-
-else:
-    st.warning("⚠️ Selecciona máquinas en el paso 1.")
+        with col_tab[idx % 3]:
+            with st.expander(f"⚙️ Parámetros Máquina {m}", expanded=False):
+                op_m = st.text_input("Fijar a operario:", value="", key=f"m_{m}", placeholder="Ej: Operario 1")
+                if op_m.strip():
+                    asignaciones_manuales[m] = op_m.strip()
+                    mot = st.radio("Motivo:", ["Condiciones de proceso", "Error distancia", "Baja saturacion", "Error coherencia"], key=f"mot_{m}")
+                    registrar_evento_ml(m, mot, op_m.strip())
