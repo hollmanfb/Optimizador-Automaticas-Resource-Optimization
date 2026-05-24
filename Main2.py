@@ -71,7 +71,6 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
         else:
             maquinas_por_asignar.append(m)
 
-    # El uso de .get() con un valor por defecto (2) previene caídas si la prioridad no se ha renderizado
     maquinas_por_asignar.sort(key=lambda x: (prioridades.get(x, 2), -WORKLOAD_MAESTRO.get(x, 0)))
     nuevo_op_idx = 1
 
@@ -106,11 +105,8 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. CONFIGURACIÓN E INICIALIZACIÓN SEGURA DEL CONTROL DE ESTADO
+# 3. CONTROL DE ESTADO (ESTABLE Y SEGURO)
 # -------------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Planificador Corporativo")
-
-# Asegurar la persistencia de variables antes de llamar a la interfaz de métricas
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
@@ -120,19 +116,15 @@ if "asignaciones_manuales" not in st.session_state:
 if "prioridades" not in st.session_state:
     st.session_state.prioridades = {m: 2 for m in WORKLOAD_MAESTRO.keys()}
 
-# Inyección segura de estilos CSS
-st.markdown("<style>.stMetric { border-left: 5px solid #1d3557 !important; background-color: #ffffff; padding: 10px; border-radius: 4px; }</style>", unsafe_with_html=True)
-
 st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
 st.markdown("---")
 
 # -------------------------------------------------------------------------
 # 4. RENDERIZADO DEL LAYOUT: PROPUESTA DE LA IA PRIMERO
 # -------------------------------------------------------------------------
-st.header("🚀 1. Propuesta Automática de Distribución del Turno")
+st.subheader("🚀 1. Propuesta Automática de Distribución del Turno")
 
 if st.session_state.maquinas_activas:
-    # Ejecución blindada
     resultado = optimizar_asignacion(
         st.session_state.maquinas_activas, 
         st.session_state.asignaciones_manuales, 
@@ -140,7 +132,7 @@ if st.session_state.maquinas_activas:
     )
     resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
     
-    # KPIs Visuales
+    # Métricas nativas seguras (Sin inyección HTML externa)
     k1, k2, k3 = st.columns(3)
     k1.metric("👤 Operarios Requeridos", len(resultado))
     k2.metric("🏭 Inyectoras en Marcha", len(st.session_state.maquinas_activas))
@@ -150,22 +142,25 @@ if st.session_state.maquinas_activas:
     st.write(" ")
     cols_res = st.columns(min(len(resultado), 4))
     
-    # Estructura del documento imprimible basado en el branding enviado
+    # Código HTML interno exclusivo para el archivo descargable de impresión
     html_print = "<html><head><style>body { font-family: Arial, sans-serif; color: #333; margin: 20px; } .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; } .title { font-size: 20pt; font-weight: bold; color: #1d3557; } .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; } .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; } .card-b { padding: 12px; } .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }</style></head><body><div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>"
 
     for idx, (operario, datos) in enumerate(sorted(resultado.items())):
         sat_p = datos['carga_total'] * 100
-        color_borde = "#e63946" if sat_p > 97.0 else "#1d3557"
-        
         html_print += f"<div class='card'><div class='card-h'>{operario} <span class='badge'>{sat_p:.1f}% Carga</span></div><div class='card-b'><ul>"
         
         with cols_res[idx % 4]:
-            st.markdown(f"<div style='background-color: #f8fafc; border: 1px solid #cbd5e1; border-top: 5px solid {color_borde}; padding: 15px; border-radius: 6px; margin-bottom: 10px;'><h4 style='margin:0; color:#1d3557;'>👤 {operario}</h4><p style='margin:5px 0; font-size:15px;'><b>Carga:</b> <code style='color:#e63946;'>{sat_p:.1f}%</code></p><hr style='margin:8px 0; border:0; border-top:1px solid #e2e8f0;'>", unsafe_with_html=True)
-            
-            for m in datos["maquinas"]:
-                st.write(f"• **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
-                html_print += f"<li>Máquina {m} ({WORKLOAD_MAESTRO[m]*100:.1f}% Workload)</li>"
-            st.markdown("</div>", unsafe_with_html=True)
+            # Contenedores nativos de Streamlit para evitar usar Markdown inseguro
+            with st.container(border=True):
+                st.markdown(f"### 👤 {operario}")
+                if sat_p > 97.0:
+                    st.error(f"🔥 Carga: {sat_p:.1f}%")
+                else:
+                    st.info(f"⚡ Carga: {sat_p:.1f}%")
+                
+                for m in datos["maquinas"]:
+                    st.write(f"• **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
+                    html_print += f"<li>Máquina {m} ({WORKLOAD_MAESTRO[m]*100:.1f}% Workload)</li>"
         html_print += "</ul></div></div>"
     html_print += "</body></html>"
 
@@ -178,29 +173,31 @@ if st.session_state.maquinas_activas:
     )
 
 # -------------------------------------------------------------------------
-# 5. CONTROLES MANUALES MOVIDOS ABAJO 
+# 5. CONTROLES MANUALES MOVIDOS AL FINAL
 # -------------------------------------------------------------------------
 st.write("---")
-st.header("⚙️ 2. Panel de Ajuste y Configuración de Planta")
+st.subheader("⚙️ 2. Panel de Ajuste y Configuración de Planta")
 
 m_seleccionadas = st.multiselect(
-    "Modifique las máquinas activas en producción:",
+    "Seleccione las máquinas activas en producción:",
     options=list(WORKLOAD_MAESTRO.keys()),
     default=st.session_state.maquinas_activas
 )
 
-if m_seleccionadas != st.session_state.maquinas_activas:
+# Botón de confirmación para evitar recargas automáticas destructivas
+if st.button("🔄 Aplicar Cambios de Configuración"):
     st.session_state.maquinas_activas = m_seleccionadas
-    st.rerun()
+    st.meta_saturacion = META_SATURACION
 
-st.subheader("🔒 Forzar Asignación Manual y Feedback ML")
+st.write(" ")
+st.markdown("### 🔒 Forzar Asignación Manual y Feedback ML")
+
 if st.session_state.maquinas_activas:
     col_tab = st.columns(3)
     for idx, m in enumerate(sorted(st.session_state.maquinas_activas)):
         with col_tab[idx % 3]:
-            with st.expander(f"⚙️ Parámetros Máquina {m}", expanded=False):
-                
-                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}", index=0)
+            with st.expander(f"Inyectora {m}", expanded=False):
+                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}")
                 prio_map = {"Alta": 1, "Media": 2, "Baja": 3}
                 st.session_state.prioridades[m] = prio_map[prio_txt]
                 
