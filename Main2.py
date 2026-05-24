@@ -5,13 +5,13 @@ import os
 from datetime import datetime
 
 # -------------------------------------------------------------------------
-# 1. BASE DE DATOS MAESTRA (WORKLOAD Y MATRIZ DE DISTANCIAS EN METROS)
+# 1. BASE DE DATOS MAESTRA (MONTAJE AUTOMÁTICO Y DISTANCIAS)
 # -------------------------------------------------------------------------
 MAX_SATURACION = 0.97  
 META_SATURACION = 0.90
-HISTORICO_ASIGNACIONES = "historico_planes.csv"
 MEMORIA_ML = "memoria_aprendizaje.csv"
 
+# Datos adaptados al área de Montaje Automático
 WORKLOAD_MAESTRO = {
     "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
     "906": 0.3289, "907": 0.3217, "911": 0.1821, "916": 0.3868,
@@ -38,52 +38,35 @@ MATRIZ_DISTANCIAS = {
     "928": {"902":40, "903":40, "904":21, "905":35, "906":37, "907":39, "911":44, "916":26, "917":16, "922":62, "923":46, "924":45, "925":62, "926":66, "927":25, "928":0}
 }
 
-def cargar_penalizaciones_ml():
-    if os.path.exists(MEMORIA_ML):
-        try:
-            df = pd.read_csv(MEMORIA_ML)
-            df_err = df[df["motivo"].str.contains("distancias|coherencia", case=False, na=False)]
-            return {str(row["maquina"]): 40.0 for _, row in df_err.iterrows()}
-        except: pass
-    return {}
-
 def registrar_evento_ml(maquina, motivo, operario):
     nuevo = pd.DataFrame([{"fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "maquina": maquina, "motivo": motivo, "operario": operario}])
     nuevo.to_csv(MEMORIA_ML, mode='a', header=not os.path.exists(MEMORIA_ML), index=False)
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO OPTIMIZADO CON TOPE ESTRICTO DEL 97%
+# 2. ALGORITMO BASE CON TOPE ESTRICTO DEL 97%
 # -------------------------------------------------------------------------
-def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
+def optimizar_asignacion(maquinas_activas):
     operarios = {}
     maquinas_por_asignar = []
-    barreras_ml = cargar_penalizaciones_ml()
 
+    # Excepción inicial: Cargas completas (100%) reciben atención dedicada
     for m in maquinas_activas:
         carga_m = WORKLOAD_MAESTRO.get(m, 0)
-        if m in asignaciones_manuales:
-            op_id = asignaciones_manuales[m]
-            if op_id not in operarios: operarios[op_id] = {"maquinas": [], "carga_total": 0.0}
-            operarios[op_id]["maquinas"].append(m)
-            operarios[op_id]["carga_total"] += carga_m
-        elif carga_m >= 1.00:
+        if carga_m >= 1.00:
             operarios[f"Operario Dedicado {m}"] = {"maquinas": [m], "carga_total": carga_m}
         else:
             maquinas_por_asignar.append(m)
 
-    maquinas_por_asignar.sort(key=lambda x: (prioridades.get(x, 2), -WORKLOAD_MAESTRO.get(x, 0)))
+    maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
     nuevo_op_idx = 1
 
     while len(maquinas_por_asignar) > 0:
         op_actual = f"Operario {nuevo_op_idx}"
-        while op_actual in operarios:
-            nuevo_op_idx += 1
-            op_actual = f"Operario {nuevo_op_idx}"
-
         operarios[op_actual] = {"maquinas": [], "carga_total": 0.0}
-        maquina_pivote = maquinas_por_asignar.pop(0)
-        operarios[op_actual]["maquinas"].append(maquina_pivote)
-        operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO[maquina_pivote]
+        
+        pivote = maquinas_por_asignar.pop(0)
+        operarios[op_actual]["maquinas"].append(pivote)
+        operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO[pivote]
 
         while len(maquinas_por_asignar) > 0:
             candidatas = []
@@ -91,120 +74,53 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
                 carga_m = WORKLOAD_MAESTRO[m]
                 if operarios[op_actual]["carga_total"] + carga_m <= MAX_SATURACION:
                     dist_base = np.mean([MATRIZ_DISTANCIAS.get(m, {}).get(y, 15.0) for y in operarios[op_actual]["maquinas"]])
-                    candidatas.append((m, dist_base + barreras_ml.get(m, 0.0), carga_m))
+                    candidatas.append((m, dist_base))
 
             if not candidatas: break
             candidatas.sort(key=lambda x: x[1])
-            mejor_m, _, mejor_c = candidatas[0]
+            mejor_m = candidatas[0][0]
             
             operarios[op_actual]["maquinas"].append(mejor_m)
-            operarios[op_actual]["carga_total"] += mejor_c
+            operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO[mejor_m]
             maquinas_por_asignar.remove(mejor_m)
         nuevo_op_idx += 1
 
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. CONTROL DE ESTADO (ESTABLE Y SEGURO)
+# 3. CONTROL DE ESTADO (ESTABLE DE SESIÓN)
 # -------------------------------------------------------------------------
+st.set_page_config(layout="wide", page_title="Planificador medmix - Montaje Automático")
+
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
-if "asignaciones_manuales" not in st.session_state:
-    st.session_state.asignaciones_manuales = {}
+# Inicializar o recalcular la propuesta base de la IA
+if "propuesta_actual" not in st.session_state or st. some_trigger_condition if False else True:
+    base_ia = optimizar_asignacion(st.session_state.maquinas_activas)
+    # Filtrar vacíos
+    st.session_state.propuesta_actual = {k: v for k, v in base_ia.items() if len(v["maquinas"]) > 0}
 
-if "prioridades" not in st.session_state:
-    st.session_state.prioridades = {m: 2 for m in WORKLOAD_MAESTRO.keys()}
-
-st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
+st.title("🏭 Balanceo Dinámico de Cargas - Área de Montaje Automático")
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 4. RENDERIZADO DEL LAYOUT: PROPUESTA DE LA IA PRIMERO
+# 4. RENDERIZADO DEL LAYOUT: PROPUESTA INTERACTIVA EN TARJETAS
 # -------------------------------------------------------------------------
-st.subheader("🚀 1. Propuesta Automática de Distribución del Turno")
+st.subheader("🚀 1. Plan del Turno Activo (Modifique Máquinas Directamente en el Operario)")
 
-if st.session_state.maquinas_activas:
-    resultado = optimizar_asignacion(
-        st.session_state.maquinas_activas, 
-        st.session_state.asignaciones_manuales, 
-        st.session_state.prioridades
-    )
-    resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
-    
-    # Métricas nativas seguras (Sin inyección HTML externa)
-    k1, k2, k3 = st.columns(3)
-    k1.metric("👤 Operarios Requeridos", len(resultado))
-    k2.metric("🏭 Inyectoras en Marcha", len(st.session_state.maquinas_activas))
-    c_med = np.mean([v["carga_total"] for v in resultado.values()]) * 100
-    k3.metric("📊 Saturación Media", f"{c_med:.1f}%")
+resultado_render = {}
+todas_las_maquinas_en_uso = []
 
-    st.write(" ")
-    cols_res = st.columns(min(len(resultado), 4))
-    
-    # Código HTML interno exclusivo para el archivo descargable de impresión
-    html_print = "<html><head><style>body { font-family: Arial, sans-serif; color: #333; margin: 20px; } .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; } .title { font-size: 20pt; font-weight: bold; color: #1d3557; } .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; } .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; } .card-b { padding: 12px; } .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }</style></head><body><div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>"
+# Calcular estados actuales basados en las interacciones de las tarjetas
+cols_res = st.columns(min(len(st.session_state.propuesta_actual), 4))
 
-    for idx, (operario, datos) in enumerate(sorted(resultado.items())):
-        sat_p = datos['carga_total'] * 100
-        html_print += f"<div class='card'><div class='card-h'>{operario} <span class='badge'>{sat_p:.1f}% Carga</span></div><div class='card-b'><ul>"
-        
-        with cols_res[idx % 4]:
-            # Contenedores nativos de Streamlit para evitar usar Markdown inseguro
-            with st.container(border=True):
-                st.markdown(f"### 👤 {operario}")
-                if sat_p > 97.0:
-                    st.error(f"🔥 Carga: {sat_p:.1f}%")
-                else:
-                    st.info(f"⚡ Carga: {sat_p:.1f}%")
-                
-                for m in datos["maquinas"]:
-                    st.write(f"• **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
-                    html_print += f"<li>Máquina {m} ({WORKLOAD_MAESTRO[m]*100:.1f}% Workload)</li>"
-        html_print += "</ul></div></div>"
-    html_print += "</body></html>"
-
-    st.write(" ")
-    st.download_button(
-        label="🖨️ Imprimir / Guardar Reporte del Turno (Layout Web)",
-        data=html_print,
-        file_name=f"Plan_Turno_{datetime.now().strftime('%d%m%Y')}.html",
-        mime="text/html"
-    )
-
-# -------------------------------------------------------------------------
-# 5. CONTROLES MANUALES MOVIDOS AL FINAL
-# -------------------------------------------------------------------------
-st.write("---")
-st.subheader("⚙️ 2. Panel de Ajuste y Configuración de Planta")
-
-m_seleccionadas = st.multiselect(
-    "Seleccione las máquinas activas en producción:",
-    options=list(WORKLOAD_MAESTRO.keys()),
-    default=st.session_state.maquinas_activas
-)
-
-# Botón de confirmación para evitar recargas automáticas destructivas
-if st.button("🔄 Aplicar Cambios de Configuración"):
-    st.session_state.maquinas_activas = m_seleccionadas
-    st.meta_saturacion = META_SATURACION
-
-st.write(" ")
-st.markdown("### 🔒 Forzar Asignación Manual y Feedback ML")
-
-if st.session_state.maquinas_activas:
-    col_tab = st.columns(3)
-    for idx, m in enumerate(sorted(st.session_state.maquinas_activas)):
-        with col_tab[idx % 3]:
-            with st.expander(f"Inyectora {m}", expanded=False):
-                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}")
-                prio_map = {"Alta": 1, "Media": 2, "Baja": 3}
-                st.session_state.prioridades[m] = prio_map[prio_txt]
-                
-                op_m = st.text_input("Fijar a operario:", value="", key=f"m_input_{m}", placeholder="Ej: Operario 1")
-                if op_m.strip():
-                    st.session_state.asignaciones_manuales[m] = op_m.strip()
-                    mot = st.radio("Motivo del cambio:", ["Condiciones de proceso", "Error distancia", "Baja saturacion", "Error coherencia"], key=f"mot_radio_{m}")
-                    registrar_evento_ml(m, mot, op_m.strip())
-                elif m in st.session_state.asignaciones_manuales:
-                    del st.session_state.asignaciones_manuales[m]
+for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual.items())):
+    with cols_res[idx % 4]:
+        with st.container(border=True):
+            st.markdown(f"### 👤 {operario}")
+            
+            # Selector directo para agregar o quitar máquinas asignadas a este operario específico
+            maquinas_operario = st.multiselect(
+                "Máquinas asignadas:",
+                options=st.session_state.maquinas_activas,
