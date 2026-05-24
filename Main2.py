@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 
 # -------------------------------------------------------------------------
-# 1. BASE DE DATOS MAESTRA (WORKLOAD Y METRIZ DE DISTANCIAS EN METROS)
+# 1. BASE DE DATOS MAESTRA (WORKLOAD Y MATRIZ DE DISTANCIAS EN METROS)
 # -------------------------------------------------------------------------
 MAX_SATURACION = 0.97  
 META_SATURACION = 0.90
@@ -71,6 +71,7 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
         else:
             maquinas_por_asignar.append(m)
 
+    # El uso de .get() con un valor por defecto (2) previene caídas si la prioridad no se ha renderizado
     maquinas_por_asignar.sort(key=lambda x: (prioridades.get(x, 2), -WORKLOAD_MAESTRO.get(x, 0)))
     nuevo_op_idx = 1
 
@@ -105,18 +106,11 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ GRÁFICA CORREGIDA (BLINDADA CONTRA ERRORES DE CSS)
+# 3. CONFIGURACIÓN E INICIALIZACIÓN SEGURA DEL CONTROL DE ESTADO
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador Corporativo")
 
-# Inyección limpia de CSS sin saltos de línea conflictivos usando un string limpio
-estilo_limpio = "<style>.stMetric { background-color: #ffffff; padding: 15px; border-radius: 8px; border-left: 5px solid #1d3557; box-shadow: 0 2px 4px rgba(0,0,0,0.05); } h1, h2, h3 { color: #1d3557 !important; font-family: 'Arial Black', Gadget, sans-serif; }</style>"
-st.markdown(estilo_limpio, unsafe_with_html=True)
-
-st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
-st.markdown("---")
-
-# Capturar las asignaciones en sesión para mantener el estado entre ejecuciones
+# Asegurar la persistencia de variables antes de llamar a la interfaz de métricas
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
@@ -126,11 +120,19 @@ if "asignaciones_manuales" not in st.session_state:
 if "prioridades" not in st.session_state:
     st.session_state.prioridades = {m: 2 for m in WORKLOAD_MAESTRO.keys()}
 
-# REQUERIMIENTO CENTRAL: SE DESPLIEGAN PRIMERO LOS RESULTADOS GENERADOS
+# Inyección segura de estilos CSS
+st.markdown("<style>.stMetric { border-left: 5px solid #1d3557 !important; background-color: #ffffff; padding: 10px; border-radius: 4px; }</style>", unsafe_with_html=True)
+
+st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
+st.markdown("---")
+
+# -------------------------------------------------------------------------
+# 4. RENDERIZADO DEL LAYOUT: PROPUESTA DE LA IA PRIMERO
+# -------------------------------------------------------------------------
 st.header("🚀 1. Propuesta Automática de Distribución del Turno")
 
 if st.session_state.maquinas_activas:
-    # Ejecutar la optimización leyendo el estado persistente
+    # Ejecución blindada
     resultado = optimizar_asignacion(
         st.session_state.maquinas_activas, 
         st.session_state.asignaciones_manuales, 
@@ -138,7 +140,7 @@ if st.session_state.maquinas_activas:
     )
     resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
     
-    # KPIs visuales superiores
+    # KPIs Visuales
     k1, k2, k3 = st.columns(3)
     k1.metric("👤 Operarios Requeridos", len(resultado))
     k2.metric("🏭 Inyectoras en Marcha", len(st.session_state.maquinas_activas))
@@ -148,7 +150,7 @@ if st.session_state.maquinas_activas:
     st.write(" ")
     cols_res = st.columns(min(len(resultado), 4))
     
-    # Construcción estructurada del Layout HTML para la impresión impecable
+    # Estructura del documento imprimible basado en el branding enviado
     html_print = "<html><head><style>body { font-family: Arial, sans-serif; color: #333; margin: 20px; } .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; } .title { font-size: 20pt; font-weight: bold; color: #1d3557; } .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; } .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; } .card-b { padding: 12px; } .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }</style></head><body><div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>"
 
     for idx, (operario, datos) in enumerate(sorted(resultado.items())):
@@ -175,7 +177,9 @@ if st.session_state.maquinas_activas:
         mime="text/html"
     )
 
-# --- CONFIGURACIONES AL FONDO DE LA PÁGINA ---
+# -------------------------------------------------------------------------
+# 5. CONTROLES MANUALES MOVIDOS ABAJO 
+# -------------------------------------------------------------------------
 st.write("---")
 st.header("⚙️ 2. Panel de Ajuste y Configuración de Planta")
 
@@ -185,7 +189,6 @@ m_seleccionadas = st.multiselect(
     default=st.session_state.maquinas_activas
 )
 
-# Detectar si cambiaron las máquinas activas para relanzar la app de forma segura
 if m_seleccionadas != st.session_state.maquinas_activas:
     st.session_state.maquinas_activas = m_seleccionadas
     st.rerun()
@@ -197,17 +200,14 @@ if st.session_state.maquinas_activas:
         with col_tab[idx % 3]:
             with st.expander(f"⚙️ Parámetros Máquina {m}", expanded=False):
                 
-                # Gestión de prioridad interactiva
-                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}", index=1)
+                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}", index=0)
                 prio_map = {"Alta": 1, "Media": 2, "Baja": 3}
                 st.session_state.prioridades[m] = prio_map[prio_txt]
                 
-                # Asignación manual de operario fijo
                 op_m = st.text_input("Fijar a operario:", value="", key=f"m_input_{m}", placeholder="Ej: Operario 1")
                 if op_m.strip():
                     st.session_state.asignaciones_manuales[m] = op_m.strip()
                     mot = st.radio("Motivo del cambio:", ["Condiciones de proceso", "Error distancia", "Baja saturacion", "Error coherencia"], key=f"mot_radio_{m}")
                     registrar_evento_ml(m, mot, op_m.strip())
                 elif m in st.session_state.asignaciones_manuales:
-                    # Limpiar si el usuario borra el campo de texto
                     del st.session_state.asignaciones_manuales[m]
