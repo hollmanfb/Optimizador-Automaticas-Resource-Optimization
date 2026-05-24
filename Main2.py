@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 # -------------------------------------------------------------------------
-# 1. BASE DE DATOS MAESTRA (MATRIZ DE M&T MEDMIX)
+# 1. BASE DE DATOS MAESTRA (TIEMPOS, CARGAS Y DISTANCIAS REALES DE PLANTA)
 # -------------------------------------------------------------------------
 MAX_SATURACION_ESTANDAR = 0.97  
 DISTANCIA_CRITICA_MAX = 20.0  
@@ -38,7 +38,7 @@ HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
 LISTA_7_OPERARIOS = [f"Operario {i}" for i in range(1, 8)]
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO SEGURO DE BALANCEO DE LÍNEA (IA SIN DUPLICADOS)
+# 2. MOTOR IA DE OPTIMIZACIÓN POR PROXIMIDAD FÍSICA
 # -------------------------------------------------------------------------
 def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     asignacion = {op: [] for op in LISTA_7_OPERARIOS}
@@ -47,7 +47,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     if not operarios_disponibles:
         return asignacion
 
-    # Fase 1: Celdas Dedicadas Estandarizadas (Carga >= 100%)
+    # Fase 1: Asignar Celdas Dedicadas Estandarizadas (Carga >= 100%)
     ops_pool = [o for o in operarios_disponibles]
     for m in list(maquinas_por_asignar):
         if WORKLOAD_MAESTRO.get(m, 0) >= 1.00:
@@ -56,15 +56,14 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion[op_elegido].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # Ordenar por criticidad de carga para balanceo óptimo
     maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
 
-    # Fase 2: Distribución por Distancia y Confort (< 97%)
+    # Fase 2: Confort de Distancia y Carga (< 97%)
     for m in list(maquinas_por_asignar):
         mejor_op = None
         menor_distancia_op = float('inf')
         
-        for op in ops_pool:  # Solo usar operarios que no tengan celdas dedicadas de 100%
+        for op in ops_pool:
             maqs_del_op = asignacion[op]
             carga_actual = sum([WORKLOAD_MAESTRO[x] for x in maqs_del_op])
             
@@ -84,15 +83,13 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Fase 3: Desborde Técnico Controlado (Si faltan operarios, meter por cercanía física estricta)
+    # Fase 3: Desborde Técnico Inteligente
     for m in list(maquinas_por_asignar):
         mejor_op_desborde = None
         menor_distancia_desborde = float('inf')
         
         for op in operarios_disponibles:
             maqs_del_op = asignacion[op]
-            
-            # Bloqueo estricto de distancias largas para evitar traslados inviables en planta
             if any(MATRIZ_DISTANCIAS.get(m, {}).get(ya, 0) > DISTANCIA_CRITICA_MAX for ya in maqs_del_op):
                 continue
                 
@@ -112,16 +109,26 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
+# Inicialización de la memoria de la aplicación
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
-    # Escenario inicial: algunas celdas en reposo semanal
     for desactiva in ["904", "906", "916", "917", "925", "926", "928"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
 if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" if idx < 4 else "Día Libre / Ausente" for idx, op in enumerate(LISTA_7_OPERARIOS)}
 
-# --- PANEL DE MANDOS LATERAL ---
+if "prioridades_estrellas" not in st.session_state:
+    st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
+
+# Inicializar la propuesta de la IA si no existe
+maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
+ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
+
+if "propuesta_actual" not in st.session_state:
+    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+
+# --- PANEL DE CONTROL LATERAL ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     
@@ -140,11 +147,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### ⚙️ Celdas en Operación")
-    
     cambio_maquinas = False
     for m in sorted(WORKLOAD_MAESTRO.keys()):
         estado_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
-        st.markdown(f"**Celda {m}** (Carga: {WORKLOAD_MAESTRO[m]*100:.1f}%)")
+        st.markdown(f"**Celda {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
         
         c_tr, c_dl = st.columns(2)
         with c_tr:
@@ -154,73 +160,135 @@ with st.sidebar:
             if st.button("🔴 Parada" if estado_actual == "Día Libre" else "Parada", key=f"btn_dl_{m}", use_container_width=True):
                 st.session_state.estados_maquinas[m] = "Día Libre"; cambio_maquinas = True
 
-# Ejecución única y centralizada del algoritmo (Evita descalces visuales)
-maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-propuesta_turno = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+    if cambio_maquinas or cambio_operarios:
+        maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
+        ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
+        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+        st.rerun()
 
 # -------------------------------------------------------------------------
-# 4. DASHBOARD CENTRAL Y ALERTAS DE CAPACIDAD
+# 4. CUADRO DE MANDOS CENTRAL (KPI RESUMEN DE M&T)
 # -------------------------------------------------------------------------
-st.title("🏭 Panel de Balanceo de Celdas — Área de Montaje")
+st.title("🏭 Planificación y Balanceo de Celdas — Área de Montaje")
 
-# Validación física de cobertura
-todas_las_maquinas_asignadas = []
-for list_m in propuesta_turno.values():
-    todas_las_maquinas_asignadas.extend(list_m)
-maquinas_huerfanas = set(maquinas_activas) - set(todas_las_maquinas_asignadas)
+num_maquinas_trabajando = len(maquinas_activas)
+num_operarios_disponibles = len(ops_activos)
 
-if maquinas_huerfanas:
-    st.error(f"🚨 **MENSJAE DE ALERTA: FALTAN MÁQUINAS POR ASIGNAR.** Las celdas {', '.join(sorted(maquinas_huerfanas))} están en marcha pero no hay personal suficiente a la distancia requerida. Por favor, pasa un nuevo operario a 'Disponible' en el panel izquierdo.")
+# Calcular la saturación basándose en el estado actual de las tarjetas
+cargas_ocupadas = []
+for op in ops_activos:
+    maqs_op = st.session_state.propuesta_actual.get(op, [])
+    cargas_ocupadas.append(sum([WORKLOAD_MAESTRO.get(m, 0) for m in maqs_op]))
+saturacion_media_turno = (np.mean(cargas_ocupadas) * 100) if cargas_ocupadas else 0.0
+
+# Despliegue de los KPIs solicitados
+kpi1, kpi2, kpi3 = st.columns(3)
+with kpi1:
+    st.metric(label="📊 Nº de Máquinas Trabajando", value=f"{num_maquinas_trabajando} Celdas")
+with kpi2:
+    st.metric(label="👤 Nº de Operarios Activos", value=f"{num_operarios_disponibles} de 7")
+with kpi3:
+    st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
+
+# --- CONCILIACIÓN FÍSICA (DETECTAR MÁQUINAS HUÉRFANAS) ---
+todas_las_maquinas_en_uso = []
+for m_list in st.session_state.propuesta_actual.values():
+    todas_las_maquinas_en_uso.extend(m_list)
+maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
+
+if maquinas_faltantes:
+    st.error(f"🚨 **MENSJAE DE ALERTA: FALTAN MÁQUINAS POR ASIGNAR.** Las celdas **{', '.join(sorted(maquinas_faltantes))}** están operando desatendidas. ¡Por favor, habilita un nuevo operario en el panel izquierdo!")
 else:
-    st.success("✅ Estructura Estable: El 100% de las celdas activas cuentan con cobertura.")
+    st.success("✅ Estructura Estable: Cobertura completa del 100% de celdas en marcha.")
 
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. DESPLIEGUE SEGURO DE FICHAS DE TRABAJO (MATRIZ REAL DE PLANTA)
+# 5. MATRIZ DE TARJETAS CON CANDADO ANTI-DUPLICADOS INTEGRADO
 # -------------------------------------------------------------------------
-st.subheader("📋 Distribución Real del Turno")
-cols_tarjetas = st.columns(4)
+st.subheader("🚀 1. Plan del Turno Activo (Modificación Manual Permitida)")
+cols_res = st.columns(4)
 
 for idx, operario in enumerate(LISTA_7_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
-    maquinas_del_op = propuesta_turno.get(operario, [])
+    maquinas_del_operario = st.session_state.propuesta_actual.get(operario, [])
     
-    with cols_tarjetas[idx % 4]:
+    with cols_res[idx % 4]:
         if not esta_disponible:
             with st.container(border=True):
-                st.markdown(f"<h3 style='color: #b0b0b0;'>👤 {operario}</h3>", unsafe_allow_html=True)
-                st.caption("⚠️ **Ausente / Descanso**")
+                st.markdown(f"<h3 style='color: #888;'>👤 {operario}</h3>", unsafe_allow_html=True)
+                st.caption("❌ **Día Libre / Ausente**")
         else:
             with st.container(border=True):
                 st.markdown(f"### 👤 {operario}")
                 
-                if not maquinas_del_op:
-                    st.info("💤 **Puesto de Reserva / Apoyo**")
-                    st.caption("Carga de Trabajo: 0.0%")
+                # --- CANDADO INTERACTIVO ANTI-DUPLICADOS ---
+                # 1. Averiguar qué máquinas han tomado los DEMÁS operarios
+                maquinas_ocupadas_por_otros = []
+                for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
+                    if op_ref != operario:
+                        maquinas_ocupadas_por_otros.extend(maqs_ref)
+                
+                # 2. Las opciones para esta tarjeta son: Máquinas Libres en planta + Las que ya tiene esta tarjeta
+                opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
+                opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
+
+                # 3. Componente de selección manual interactivo
+                nuevas_maquinas = st.multiselect("Asignar celdas:", options=opciones_visibles, default=maquinas_del_operario, key=f"ms_tarjeta_{operario}")
+                
+                # Guardar inmediatamente en el estado global para que el siguiente operario ya vea el bloqueo
+                if nuevas_maquinas != maquinas_del_operario:
+                    st.session_state.propuesta_actual[operario] = nuevas_maquinas
+                    st.rerun()
+                
+                # --- ANÁLISIS DE MÉTODOS Y TIEMPOS (SATURACIÓN DE FICHA) ---
+                carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in nuevas_maquinas])
+                sat_p = carga_real * 100
+                
+                aplica_excepcion_pasillo = len(nuevas_maquinas) > 0 and all(m in HEURISTICA_PASILLO for m in nuevas_maquinas)
+                tope_limite = 130.0 if aplica_excepcion_pasillo else 97.0
+                
+                if sat_p > 100.0:
+                    st.error(f"🔴 Sobrecarga Crítica: {sat_p:.1f}%")
+                elif sat_p > tope_limite:
+                    st.warning(f"⚠️ Carga Elevada: {sat_p:.1f}%")
+                elif sat_p == 0:
+                    st.caption("💤 Sin celdas a cargo.")
                 else:
-                    # Mostrar las máquinas asignadas de manera limpia y clara
-                    st.markdown("**Celdas a Cargo:**")
-                    for m in maquinas_del_op:
-                        st.write(f"• **Máquina {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}% carga)")
-                    
-                    # Cálculo exacto de carga real asignada
-                    carga_total_op = sum([WORKLOAD_MAESTRO[m] for m in maquinas_del_op]) * 100
-                    
-                    # Alertas de saturación exactas por ficha
-                    if carga_total_op > 100.0:
-                        st.error(f"🔴 Sobrecarga Crítica: {carga_total_op:.1f}%")
-                    elif carga_total_op > 97.0:
-                        st.warning(f"⚠️ Carga Elevada: {carga_total_op:.1f}%")
-                    else:
-                        st.success(f"⚡ Carga Óptima: {carga_total_op:.1f}%")
-                    
-                    # Despliegue de Trayectos Internos de la Ficha
-                    if len(maquinas_del_op) > 1:
-                        with st.expander("📍 Auditoría de Distancias"):
-                            for i in range(len(maquinas_del_op)):
-                                for j in range(i + 1, len(maquinas_del_op)):
-                                    m1, m2 = maquinas_del_op[i], maquinas_del_op[j]
-                                    d = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
-                                    st.write(f"{m1} ↔️ {m2}: {d} metros")
+                    st.info(f"⚡ Carga equilibrada: {sat_p:.1f}%")
+
+                # Auditar metros de traslados físicos entre máquinas
+                if len(nuevas_maquinas) > 1:
+                    distancias_texto = []
+                    alerta_distancia = False
+                    for i in range(len(nuevas_maquinas)):
+                        for j in range(i + 1, len(nuevas_maquinas)):
+                            m1, m2 = nuevas_maquinas[i], nuevas_maquinas[j]
+                            dist = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
+                            distancias_texto.append(f"{m1} ↔️ {m2}: {dist}m")
+                            if dist > DISTANCIA_CRITICA_MAX:
+                                alerta_distancia = True
+                                
+                    with st.expander("📍 Trayectos de Celda", expanded=alerta_distancia):
+                        for txt in distancias_texto:
+                            if any(f"{x}m" in txt for x in ["21","23","24","25","26","27","28","29","35","36","37","38","39","40","41","42","43","44","45","46","47","48","49","50","51","59","62","66","70","74","78","80"]):
+                                st.write(f"❌ {txt} — **Inviable**")
+                            else:
+                                st.write(f"✅ {txt}")
+
+                if nuevas_maquinas:
+                    st.write("**Criticidad de Atención:**")
+                    for m in nuevas_maquinas:
+                        c1, c2 = st.columns([1, 2])
+                        with c1: st.caption(f"🤖 **M-{m}**")
+                        with c2:
+                            prio_estrella = st.selectbox(f"Prio_{operario}_{m}", options=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"], index=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"].index(st.session_state.prioridades_estrellas.get(m, "⭐⭐ Media")), label_visibility="collapsed", key=f"star_sel_{operario}_{m}")
+                            st.session_state.prioridades_estrellas[m] = prio_estrella
+
+# -------------------------------------------------------------------------
+# 6. RECALCULO POR IA
+# -------------------------------------------------------------------------
+st.write("---")
+if st.button("🔄 Recalcular por Proximidad (IA)"):
+    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+    st.rerun()
