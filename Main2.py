@@ -6,7 +6,7 @@ from datetime import datetime
 # -------------------------------------------------------------------------
 # 1. BASE DE DATOS MAESTRA (MONTAJE AUTOMÁTICO, CARGAS Y DISTANCIAS REALES)
 # -------------------------------------------------------------------------
-MAX_SATURACION = 0.97  
+MAX_SATURACION_ESTANDAR = 0.97  
 
 WORKLOAD_MAESTRO = {
     "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
@@ -34,8 +34,11 @@ MATRIZ_DISTANCIAS = {
     "928": {"902":40, "903":40, "904":21, "905":35, "906":37, "907":39, "911":44, "916":26, "917":16, "922":62, "923":46, "924":45, "925":62, "926":66, "927":25, "928":0}
 }
 
+# Grupo especial de la heurística de cercanía (Pasillo Izquierdo / Inferior)
+HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
+
 # -------------------------------------------------------------------------
-# 2. MOTOR DE OPTIMIZACIÓN BASADO EN PROXIMIDAD GEOGRÁFICA (METROS)
+# 2. MOTOR DE OPTIMIZACIÓN BASADO EN PROXIMIDAD GEOGRÁFICA
 # -------------------------------------------------------------------------
 def optimizar_con_distancias(maquinas_trabajando):
     operarios = {}
@@ -47,7 +50,7 @@ def optimizar_con_distancias(maquinas_trabajando):
             operarios[f"Operario Dedicado {m}"] = {"maquinas": [m]}
             maquinas_por_asignar.remove(m)
 
-    # 2. Agrupar el resto por cercanía estricta en metros
+    # 2. Agrupar el resto por cercanía física
     maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
     nuevo_op_idx = 1
 
@@ -57,20 +60,24 @@ def optimizar_con_distancias(maquinas_trabajando):
         operarios[op_actual] = {"maquinas": [pivote]}
         
         while len(maquinas_por_asignar) > 0:
-            carga_actual = sum([WORKLOAD_MAESTRO[x] for x in operarios[op_actual]["maquinas"]])
+            maqs_actuales = operarios[op_actual]["maquinas"]
+            carga_actual = sum([WORKLOAD_MAESTRO[x] for x in maqs_actuales])
             candidatas_cercanas = []
 
             for m in maquinas_por_asignar:
                 carga_m = WORKLOAD_MAESTRO[m]
-                if carga_actual + carga_m <= MAX_SATURACION:
-                    # Distancia promedio de la nueva máquina a las ya asignadas en esta tarjeta
-                    dist_promedio = np.mean([MATRIZ_DISTANCIAS[m].get(ya_asignada, 50.0) for ya_asignada in operarios[op_actual]["maquinas"]])
+                
+                # Definir tope dinámico si aplica la combinación especial del pasillo
+                todas_en_pasillo = all(x in HEURISTICA_PASILLO for x in maqs_actuales + [m])
+                tope_actual = 1.30 if todas_en_pasillo else MAX_SATURACION_ESTANDAR
+
+                if carga_actual + carga_m <= tope_actual:
+                    dist_promedio = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_actuales])
                     candidatas_cercanas.append((m, dist_promedio))
             
             if not candidatas_cercanas:
                 break
             
-            # Ordenar por menor distancia en metros (Evita emparejar 911 con 923)
             candidatas_cercanas.sort(key=lambda x: x[1])
             mejor_maquina = candidatas_cercanas[0][0]
             
@@ -82,60 +89,76 @@ def optimizar_con_distancias(maquinas_trabajando):
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ Y CONTROL DE ESTADOS (STREAMLIT)
+# 3. INTERFAZ Y CONTROL DE ESTADOS CON BOTONES DE COLORES
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador medmix")
 
-# Inicialización de estados de sesión
+# Inicializar estados de máquina si no existen
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
-    # Ajuste inicial por defecto de algunas en Día Libre si se requiere
     for desactiva in ["904", "906", "916", "917", "925", "926", "928"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
 if "prioridades_estrellas" not in st.session_state:
     st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
 
-# --- COLUMNA IZQUIERDA (CONTROL DE ESTADOS DISPONIBLES) ---
+# --- COLUMNA IZQUIERDA: PANELES VISUALES DE ESTADO ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     st.header("⚙️ Estado de las Máquinas")
-    st.write("Cambia a 'Día Libre' para retirar una máquina del turno:")
+    st.write("Selecciona el estado operativo de cada celda:")
     
-    estados_actualizados = {}
+    cambio_detectado = False
+    
     for m in sorted(WORKLOAD_MAESTRO.keys()):
-        estado_previo = st.session_state.estados_maquinas.get(m, "Trabajando")
-        opcion = st.selectbox(
-            f"Máquina {m} (Carga: {WORKLOAD_MAESTRO[m]*100:.1f}%)",
-            options=["Trabajando", "Día Libre"],
-            index=0 if estado_previo == "Trabajando" else 1,
-            key=f"sb_estado_{m}"
-        )
-        estados_actualizados[m] = opcion
+        st.markdown(f"**Máquina {m}** *(Carga: {WORKLOAD_MAESTRO[m]*100:.1f}%)*")
+        estado_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
+        
+        # Crear 3 columnas de botones para simular un selector de color
+        c_tr, c_dl, c_av = st.columns(3)
+        
+        with c_tr:
+            label_tr = "🟢 Trab" if estado_actual == "Trabajando" else "Trab"
+            if st.button(label_tr, key=f"btn_tr_{m}", use_container_width=True):
+                if st.session_state.estados_maquinas[m] != "Trabajando":
+                    st.session_state.estados_maquinas[m] = "Trabajando"
+                    cambio_detectado = True
+                    
+        with c_dl:
+            label_dl = "🟡 Libre" if estado_actual == "Día Libre" else "Libre"
+            if st.button(label_dl, key=f"btn_dl_{m}", use_container_width=True):
+                if st.session_state.estados_maquinas[m] != "Día Libre":
+                    st.session_state.estados_maquinas[m] = "Día Libre"
+                    cambio_detectado = True
+                    
+        with c_av:
+            label_av = "🔴 Avería" if estado_actual == "Avería" else "Avería"
+            if st.button(label_av, key=f"btn_av_{m}", use_container_width=True):
+                if st.session_state.estados_maquinas[m] != "Avería":
+                    st.session_state.estados_maquinas[m] = "Avería"
+                    cambio_detectado = True
+        st.markdown("---")
 
-    # Detectar cambios en los interruptores laterales para recalcular de inmediato
-    if estados_actualizados != st.session_state.estados_maquinas:
-        st.session_state.estados_maquinas = estados_actualizados
-        maquinas_activas = [k for k, v in estados_actualizados.items() if v == "Trabajando"]
+    if cambio_detectado:
+        maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
         base_ia = optimizar_con_distancias(maquinas_activas)
         st.session_state.propuesta_actual = {k: v["maquinas"] for k, v in base_ia.items()}
         st.rerun()
 
-# Filtrar lista de ejecución en base a la columna izquierda
+# Filtrar celdas operativas válidas (Excluye Día Libre y Avería)
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 
 if "propuesta_actual" not in st.session_state:
     base_ia = optimizar_con_distancias(maquinas_activas)
     st.session_state.propuesta_actual = {k: v["maquinas"] for k, v in base_ia.items()}
 
-st.title("🏭 Balanceo de Línea con Matriz de Distancia Física")
-st.caption("Área de Montaje Automático — Respetando distancias de celdas y topes de saturación.")
+st.title("🏭 Planificación y Balanceo de Celdas — Área de Montaje")
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 4. ENTORNO DE ASIGNACIÓN INTERACTIVA EN TARJETAS
+# 4. INTERFAZ DINÁMICA DE OPERARIOS
 # -------------------------------------------------------------------------
-st.subheader("🚀 1. Control de Operarios y Asignación Manual")
+st.subheader("🚀 1. Plan del Turno Activo (Modificación en Vivo)")
 
 resultado_final_impresion = {}
 cols_res = st.columns(min(max(len(st.session_state.propuesta_actual), 1), 4))
@@ -143,7 +166,7 @@ cols_res = st.columns(min(max(len(st.session_state.propuesta_actual), 1), 4))
 for idx, operario in enumerate(sorted(list(st.session_state.propuesta_actual.keys()))):
     maquinas_del_operario = st.session_state.propuesta_actual.get(operario, [])
     
-    # Exclusión Mutua en tiempo real: remover asignadas a otros del desplegable
+    # Exclusión mutua estricta entre tarjetas
     otras_asignadas = []
     for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
         if op_ref != operario:
@@ -156,51 +179,54 @@ for idx, operario in enumerate(sorted(list(st.session_state.propuesta_actual.key
             st.markdown(f"### 👤 {operario}")
             
             nuevas_maquinas = st.multiselect(
-                "Añadir/Quitar Máquinas:",
+                "Máquinas asignadas:",
                 options=opciones_disponibles,
                 default=[m for m in maquinas_del_operario if m in opciones_disponibles],
                 key=f"ms_tarjeta_{operario}"
             )
             
-            # Guardar selección manual en la sesión
             st.session_state.propuesta_actual[operario] = nuevas_maquinas
             
-            # Validación de métricas (Carga + Distancias internas en la tarjeta)
+            # Cálculo de la carga total asignada
             carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in nuevas_maquinas])
             sat_p = carga_real * 100
             
-            # Mostrar distancias internas críticas si tiene más de una máquina
-            alerta_distancia = False
-            distancias_texto = []
-            if len(nuevas_maquinas) > 1:
-                for i in range(len(nuevas_maquinas)):
-                    for j in range(i + 1, len(nuevas_maquinas)):
-                        m1, m2 = nuevas_maquinas[i], nuevas_maquinas[j]
-                        dist = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
-                        distancias_texto.append(f"Distancia {m1}↔️{m2}: {dist}m")
-                        if dist > 20: # Alerta si supera los 20 metros de traslado
-                            alerta_distancia = True
-
-            # Colores informativos de carga
-            if sat_p > 97.0 and "Dedicado" not in operario:
-                st.error(f"🔥 Sobrecarga: {sat_p:.1f}% (Máx 97%)")
+            # Validar si aplica la heurística flexible de pasillo (ej: 922, 911, 925, etc.)
+            aplica_excepcion_pasillo = len(nuevas_maquinas) > 0 and all(m in HEURISTICA_PASILLO for m in nuevas_maquinas)
+            tope_limite = 130.0 if aplica_excepcion_pasillo else 97.0
+            
+            # Renderizado de Alerta de Carga
+            if sat_p > tope_limite and "Dedicado" not in operario:
+                st.error(f"🔥 Sobrecarga: {sat_p:.1f}% (Límite {tope_limite}%)")
+            elif aplica_excepcion_pasillo:
+                st.success(f"🟢 Combinación de Cercanía: {sat_p:.1f}% Carga")
             elif "Dedicado" in operario:
                 st.warning(f"⚡ Operario Dedicado: {sat_p:.1f}%")
             else:
                 st.info(f"⚡ Carga total: {sat_p:.1f}%")
 
-            # Desplegar avisos de distancias largas dentro de la tarjeta
-            if distancias_texto:
-                with st.expander("📍 Ver trayectos en metros", expanded=alerta_distancia):
+            # Mostrar metros y trayectos entre máquinas asignadas
+            if len(nuevas_maquinas) > 1:
+                distancias_texto = []
+                alerta_distancia = False
+                for i in range(len(nuevas_maquinas)):
+                    for j in range(i + 1, len(nuevas_maquinas)):
+                        m1, m2 = nuevas_maquinas[i], nuevas_maquinas[j]
+                        dist = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
+                        distancias_texto.append(f"{m1} ↔️ {m2}: {dist}m")
+                        if dist > 20:
+                            alerta_distancia = True
+                            
+                with st.expander("📍 Medición de Trayectos", expanded=alerta_distancia):
                     for txt in distancias_texto:
                         if "37m" in txt or "40m" in txt or "44m" in txt:
-                            st.write(f"❌ {txt} — **¡Muy lejos!**")
+                            st.write(f"❌ {txt} — **Distancia Excesiva**")
                         else:
                             st.write(f"✅ {txt}")
 
-            # Sistema de Prioridades por Estrellas (⭐)
+            # Gestión de Prioridades por Estrellas (⭐)
             if nuevas_maquinas:
-                st.write("**Criticidad / Estrellas:**")
+                st.write("**Criticidad de Atención:**")
                 for m in nuevas_maquinas:
                     c1, c2 = st.columns([1, 2])
                     with c1:
@@ -217,17 +243,17 @@ for idx, operario in enumerate(sorted(list(st.session_state.propuesta_actual.key
                         
             resultado_final_impresion[operario] = {"maquinas": nuevas_maquinas, "carga": sat_p}
 
-# Alertas globales de máquinas desatendidas
+# Notificación de alertas de máquinas huérfanas
 todas_las_maquinas_en_uso = []
 for m_list in st.session_state.propuesta_actual.values():
     todas_las_maquinas_en_uso.extend(m_list)
 maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 
 if maquinas_faltantes:
-    st.error(f"⚠️ **Máquinas sin cubrir:** Tienes máquinas en estado 'Trabajando' que no han sido asignadas: {', '.join(sorted(maquinas_faltantes))}")
+    st.error(f"⚠️ **Atención:** Hay celdas trabajando sin operario asignado: {', '.join(sorted(maquinas_faltantes))}")
 
 # -------------------------------------------------------------------------
-# 5. REPORTE DE IMPRESIÓN ADAPTADO (ESTILO MEDMIX CON PRIORIDADES Y METROS)
+# 5. REPORTE DE IMPRESIÓN LIMPIO
 # -------------------------------------------------------------------------
 st.write("---")
 html_print = """
@@ -249,7 +275,7 @@ html_print = """
 <body>
     <div class='header'>
         <div class='title'>medmix - HOJA DE TRABAJO DE MONTAJE AUTOMÁTICO</div>
-        <div class='subtitle'>Reporte Verde de Distribución de Cargas y Matriz de Proximidad</div>
+        <div class='subtitle'>Distribución Oficial del Personal del Turno</div>
     </div>
 """
 
@@ -259,7 +285,7 @@ for operario, datos in sorted(resultado_final_impresion.items()):
         <div class='card'>
             <div class='card-h'>{operario} <span class='badge-normal'>{datos["carga"]:.1f}% Carga</span></div>
             <div class='card-b'>
-                <strong>Hoja de Ruta del Puesto:</strong>
+                <strong>Asignación de Celdas:</strong>
                 <ul>
         """
         for m in datos["maquinas"]:
@@ -280,6 +306,6 @@ with col_acc2:
     st.download_button(
         label="🖨️ Descargar Documento para Impresión de Planta",
         data=html_print,
-        file_name=f"Ruta_Montaje_Medmix_{datetime.now().strftime('%d%m%Y')}.html",
+        file_name=f"Plan_Montaje_Medmix_{datetime.now().strftime('%d%m%Y')}.html",
         mime="text/html"
     )
