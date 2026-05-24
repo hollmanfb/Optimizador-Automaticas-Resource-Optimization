@@ -11,7 +11,6 @@ MAX_SATURACION = 0.97
 META_SATURACION = 0.90
 MEMORIA_ML = "memoria_aprendizaje.csv"
 
-# Datos adaptados al área de Montaje Automático
 WORKLOAD_MAESTRO = {
     "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
     "906": 0.3289, "907": 0.3217, "911": 0.1821, "916": 0.3868,
@@ -38,10 +37,6 @@ MATRIZ_DISTANCIAS = {
     "928": {"902":40, "903":40, "904":21, "905":35, "906":37, "907":39, "911":44, "916":26, "917":16, "922":62, "923":46, "924":45, "925":62, "926":66, "927":25, "928":0}
 }
 
-def registrar_evento_ml(maquina, motivo, operario):
-    nuevo = pd.DataFrame([{"fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "maquina": maquina, "motivo": motivo, "operario": operario}])
-    nuevo.to_csv(MEMORIA_ML, mode='a', header=not os.path.exists(MEMORIA_ML), index=False)
-
 # -------------------------------------------------------------------------
 # 2. ALGORITMO BASE CON TOPE ESTRICTO DEL 97%
 # -------------------------------------------------------------------------
@@ -49,7 +44,6 @@ def optimizar_asignacion(maquinas_activas):
     operarios = {}
     maquinas_por_asignar = []
 
-    # Excepción inicial: Cargas completas (100%) reciben atención dedicada
     for m in maquinas_activas:
         carga_m = WORKLOAD_MAESTRO.get(m, 0)
         if carga_m >= 1.00:
@@ -88,17 +82,16 @@ def optimizar_asignacion(maquinas_activas):
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. CONTROL DE ESTADO (ESTABLE DE SESIÓN)
+# 3. CONTROL DE ESTADO DE SESIÓN (ESTABLE)
 # -------------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Planificador medmix - Montaje Automático")
+st.set_page_config(layout="wide", page_title="Planificador medmix")
 
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
-# Inicializar o recalcular la propuesta base de la IA
-if "propuesta_actual" not in st.session_state or st. some_trigger_condition if False else True:
+# Inicializar propuesta automática si no existe
+if "propuesta_actual" not in st.session_state:
     base_ia = optimizar_asignacion(st.session_state.maquinas_activas)
-    # Filtrar vacíos
     st.session_state.propuesta_actual = {k: v for k, v in base_ia.items() if len(v["maquinas"]) > 0}
 
 st.title("🏭 Balanceo Dinámico de Cargas - Área de Montaje Automático")
@@ -112,7 +105,7 @@ st.subheader("🚀 1. Plan del Turno Activo (Modifique Máquinas Directamente en
 resultado_render = {}
 todas_las_maquinas_en_uso = []
 
-# Calcular estados actuales basados en las interacciones de las tarjetas
+# Crear columnas dinámicas para los operarios
 cols_res = st.columns(min(len(st.session_state.propuesta_actual), 4))
 
 for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual.items())):
@@ -120,7 +113,96 @@ for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual
         with st.container(border=True):
             st.markdown(f"### 👤 {operario}")
             
-            # Selector directo para agregar o quitar máquinas asignadas a este operario específico
+            # Selector dinámico corregido por tarjeta
             maquinas_operario = st.multiselect(
                 "Máquinas asignadas:",
                 options=st.session_state.maquinas_activas,
+                default=datos["maquinas"],
+                key=f"ms_{operario}"
+            )
+            
+            # Calcular saturación del operario en tiempo real
+            carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in maquinas_operario])
+            sat_p = carga_real * 100
+            
+            if sat_p > 97.0 and "Dedicado" not in operario:
+                st.error(f"🔥 Sobrecarga: {sat_p:.1f}% (Máx 97%)")
+            elif "Dedicado" in operario:
+                st.warning(f"⚡ Operario Dedicado: {sat_p:.1f}%")
+            else:
+                st.info(f"⚡ Carga actual: {sat_p:.1f}%")
+            
+            # Mostrar sub-detalles de cargas de las máquinas seleccionadas
+            for m in maquinas_operario:
+                st.caption(f"• **Máquina {m}**: {WORKLOAD_MAESTRO[m]*100:.1f}% carga")
+                
+            # Guardar el estado interactivo modificado por el usuario
+            resultado_render[operario] = {"maquinas": maquinas_operario, "carga_total": carga_real}
+            todas_las_maquinas_en_uso.extend(maquinas_operario)
+
+# Mensaje de aviso si quedan máquinas automáticas sin asignar en el layout
+maquinas_faltantes = set(st.session_state.maquinas_activas) - set(todas_las_maquinas_en_uso)
+if maquinas_faltantes:
+    st.warning(f"⚠️ Las siguientes Máquinas Automáticas no están asignadas a ningún operario: {', '.join(maquinas_faltantes)}")
+
+# -------------------------------------------------------------------------
+# 5. GENERACIÓN DEL REPORTE IMPRIMIBLE (ESTILO MEDMIX)
+# -------------------------------------------------------------------------
+html_print = """
+<html>
+<head>
+<style>
+    body { font-family: Arial, sans-serif; color: #222; margin: 20px; }
+    .header { border-bottom: 4px solid #1c6e7d; padding-bottom: 12px; margin-bottom: 25px; }
+    .title { font-size: 22pt; font-weight: bold; color: #1c6e7d; }
+    .subtitle { font-size: 11pt; color: #555; }
+    .card { border: 1px solid #bce1e6; border-radius: 6px; margin-bottom: 18px; background: #f4fafb; overflow: hidden; }
+    .card-h { background: #1c6e7d; color: white; padding: 12px; font-weight: bold; font-size: 13pt; }
+    .card-b { padding: 15px; }
+    .badge { background: #d9534f; color: white; padding: 3px 8px; border-radius: 4px; font-size: 10pt; float: right; }
+    .badge-normal { background: #2b93a5; color: white; padding: 3px 8px; border-radius: 4px; font-size: 10pt; float: right; }
+    ul { margin: 5px 0; padding-left: 20px; }
+    li { margin-bottom: 5px; font-size: 11pt; }
+</style>
+</head>
+<body>
+    <div class='header'>
+        <div class='title'>medmix - PLAN DE DISTRIBUCIÓN DE OPERARIOS</div>
+        <div class='subtitle'>Área: Montaje Automático | Reporte del Turno Organizado</div>
+    </div>
+"""
+
+for operario, datos in sorted(resultado_render.items()):
+    if datos["maquinas"]:
+        sat_p = datos['carga_total'] * 100
+        clase_badge = "badge" if (sat_p > 97.0 and "Dedicado" not in operario) else "badge-normal"
+        
+        html_print += f"""
+        <div class='card'>
+            <div class='card-h'>{operario} <span class='{clase_badge}'>{sat_p:.1f}% Carga</span></div>
+            <div class='card-b'>
+                <strong>Máquinas Automáticas Asignadas:</strong>
+                <ul>
+        """
+        for m in datos["maquinas"]:
+            html_print += f"<li>Máquina {m} — Carga Individual: {WORKLOAD_MAESTRO[m]*100:.1f}%</li>"
+        html_print += "</ul></div></div>"
+
+html_print += "</body></html>"
+
+st.write(" ")
+st.download_button(
+    label="🖨️ Generar PDF / Reporte de Impresión (Layout medmix)",
+    data=html_print,
+    file_name=f"Plan_Montaje_Automatico_{datetime.now().strftime('%d%m%Y')}.html",
+    mime="text/html"
+)
+
+# -------------------------------------------------------------------------
+# 6. PANEL DE CONFIGURACIÓN DE MÁQUINAS ACTIVAS
+# -------------------------------------------------------------------------
+st.write("---")
+st.subheader("⚙️ 2. Configuración de Máquinas de Montaje Activas")
+
+m_seleccionadas = st.multiselect(
+    "Seleccione las Máquinas Automáticas oper
