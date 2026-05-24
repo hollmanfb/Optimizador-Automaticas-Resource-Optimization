@@ -89,7 +89,6 @@ st.set_page_config(layout="wide", page_title="Planificador medmix")
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
 
-# Inicializar propuesta automática si no existe
 if "propuesta_actual" not in st.session_state:
     base_ia = optimizar_asignacion(st.session_state.maquinas_activas)
     st.session_state.propuesta_actual = {k: v for k, v in base_ia.items() if len(v["maquinas"]) > 0}
@@ -105,7 +104,6 @@ st.subheader("🚀 1. Plan del Turno Activo (Modifique Máquinas Directamente en
 resultado_render = {}
 todas_las_maquinas_en_uso = []
 
-# Crear columnas dinámicas para los operarios
 cols_res = st.columns(min(len(st.session_state.propuesta_actual), 4))
 
 for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual.items())):
@@ -113,7 +111,6 @@ for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual
         with st.container(border=True):
             st.markdown(f"### 👤 {operario}")
             
-            # Selector dinámico corregido por tarjeta
             maquinas_operario = st.multiselect(
                 "Máquinas asignadas:",
                 options=st.session_state.maquinas_activas,
@@ -121,7 +118,6 @@ for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual
                 key=f"ms_{operario}"
             )
             
-            # Calcular saturación del operario en tiempo real
             carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in maquinas_operario])
             sat_p = carga_real * 100
             
@@ -132,15 +128,12 @@ for idx, (operario, datos) in enumerate(sorted(st.session_state.propuesta_actual
             else:
                 st.info(f"⚡ Carga actual: {sat_p:.1f}%")
             
-            # Mostrar sub-detalles de cargas de las máquinas seleccionadas
             for m in maquinas_operario:
                 st.caption(f"• **Máquina {m}**: {WORKLOAD_MAESTRO[m]*100:.1f}% carga")
                 
-            # Guardar el estado interactivo modificado por el usuario
             resultado_render[operario] = {"maquinas": maquinas_operario, "carga_total": carga_real}
             todas_las_maquinas_en_uso.extend(maquinas_operario)
 
-# Mensaje de aviso si quedan máquinas automáticas sin asignar en el layout
 maquinas_faltantes = set(st.session_state.maquinas_activas) - set(todas_las_maquinas_en_uso)
 if maquinas_faltantes:
     st.warning(f"⚠️ Las siguientes Máquinas Automáticas no están asignadas a ningún operario: {', '.join(maquinas_faltantes)}")
@@ -205,4 +198,13 @@ st.write("---")
 st.subheader("⚙️ 2. Configuración de Máquinas de Montaje Activas")
 
 m_seleccionadas = st.multiselect(
-    "Seleccione las Máquinas Automáticas oper
+    "Seleccione las Máquinas Automáticas operativas para este turno:",
+    options=list(WORKLOAD_MAESTRO.keys()),
+    default=st.session_state.maquinas_activas
+)
+
+if st.button("🔄 Actualizar y Recalcular Distribución"):
+    st.session_state.maquinas_activas = m_seleccionadas
+    base_ia = optimizar_asignacion(m_seleccionadas)
+    st.session_state.propuesta_actual = {k: v for k, v in base_ia.items() if len(v["maquinas"]) > 0}
+    st.rerun()
