@@ -7,7 +7,7 @@ from datetime import datetime
 # -------------------------------------------------------------------------
 # 1. BASE DE DATOS MAESTRA (WORKLOAD Y METRIZ DE DISTANCIAS EN METROS)
 # -------------------------------------------------------------------------
-MAX_SATURACION = 0.97  # Límite estricto solicitado
+MAX_SATURACION = 0.97  
 META_SATURACION = 0.90
 HISTORICO_ASIGNACIONES = "historico_planes.csv"
 MEMORIA_ML = "memoria_aprendizaje.csv"
@@ -59,7 +59,6 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
     maquinas_por_asignar = []
     barreras_ml = cargar_penalizaciones_ml()
 
-    # REGLA EXCEPCIÓN: Máquinas forzadas o con carga >= 100% nativa (Ej: 924, 917)
     for m in maquinas_activas:
         carga_m = WORKLOAD_MAESTRO.get(m, 0)
         if m in asignaciones_manuales:
@@ -86,7 +85,6 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
         operarios[op_actual]["maquinas"].append(maquina_pivote)
         operarios[op_actual]["carga_total"] += WORKLOAD_MAESTRO[maquina_pivote]
 
-        # Agregar compañeros sin violar jamás el 97% max de saturación
         while len(maquinas_por_asignar) > 0:
             candidatas = []
             for m in maquinas_por_asignar:
@@ -107,35 +105,37 @@ def optimizar_asignacion(maquinas_activas, asignaciones_manuales, prioridades):
     return operarios
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ GRÁFICA CORREGIDA (PROPUESTA PRIMERO + ESTILOS BRANDING)
+# 3. INTERFAZ GRÁFICA CORREGIDA (BLINDADA CONTRA ERRORES DE CSS)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador Corporativo")
 
-# Inyección de estilos de la paleta de colores de la empresa
-st.markdown("""
-    <style>
-        .reportview-container { background-color: #f4f6f9; }
-        .stMetric { background-color: #ffffff; padding: 15px; border-radius: 8px; border-left: 5px solid #1d3557; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        h1, h2, h3 { color: #1d3557 !important; font-family: 'Arial Black', Gadget, sans-serif; }
-        div.stButton > button:first-child { background-color: #e63946 !important; color: white !important; font-weight: bold; border-radius: 6px; }
-    </style>
-""", unsafe_with_html=True)
+# Inyección limpia de CSS sin saltos de línea conflictivos usando un string limpio
+estilo_limpio = "<style>.stMetric { background-color: #ffffff; padding: 15px; border-radius: 8px; border-left: 5px solid #1d3557; box-shadow: 0 2px 4px rgba(0,0,0,0.05); } h1, h2, h3 { color: #1d3557 !important; font-family: 'Arial Black', Gadget, sans-serif; }</style>"
+st.markdown(estilo_limpio, unsafe_with_html=True)
 
 st.title("🏭 Planificación y Balanceo Dinámico de Cargas")
 st.markdown("---")
 
+# Capturar las asignaciones en sesión para mantener el estado entre ejecuciones
 if "maquinas_activas" not in st.session_state:
     st.session_state.maquinas_activas = ["927", "902", "922", "911", "905", "907", "903", "923", "924"]
+
+if "asignaciones_manuales" not in st.session_state:
+    st.session_state.asignaciones_manuales = {}
+
+if "prioridades" not in st.session_state:
+    st.session_state.prioridades = {m: 2 for m in WORKLOAD_MAESTRO.keys()}
 
 # REQUERIMIENTO CENTRAL: SE DESPLIEGAN PRIMERO LOS RESULTADOS GENERADOS
 st.header("🚀 1. Propuesta Automática de Distribución del Turno")
 
-# Variables temporales para la inicialización ordenada
-asignaciones_manuales = {}
-prioridades = {m: 2 for m in st.session_state.maquinas_activas}
-
 if st.session_state.maquinas_activas:
-    resultado = optimizar_asignacion(st.session_state.maquinas_activas, asignaciones_manuales, prioridades)
+    # Ejecutar la optimización leyendo el estado persistente
+    resultado = optimizar_asignacion(
+        st.session_state.maquinas_activas, 
+        st.session_state.asignaciones_manuales, 
+        st.session_state.prioridades
+    )
     resultado = {k: v for k, v in resultado.items() if len(v["maquinas"]) > 0}
     
     # KPIs visuales superiores
@@ -145,37 +145,20 @@ if st.session_state.maquinas_activas:
     c_med = np.mean([v["carga_total"] for v in resultado.values()]) * 100
     k3.metric("📊 Saturación Media", f"{c_med:.1f}%")
 
-    # Renderizado de Tarjetas de Operarios alineadas
     st.write(" ")
     cols_res = st.columns(min(len(resultado), 4))
     
     # Construcción estructurada del Layout HTML para la impresión impecable
-    html_print = """<html><head><style>
-        body { font-family: Arial, sans-serif; color: #333; margin: 20px; }
-        .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; }
-        .title { font-size: 20pt; font-weight: bold; color: #1d3557; }
-        .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; }
-        .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; }
-        .card-b { padding: 12px; }
-        .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }
-    </style></head><body>
-    <div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>
-    """
+    html_print = "<html><head><style>body { font-family: Arial, sans-serif; color: #333; margin: 20px; } .header { border-bottom: 3px solid #1d3557; padding-bottom: 10px; margin-bottom: 20px; } .title { font-size: 20pt; font-weight: bold; color: #1d3557; } .card { border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 15px; background: #f8fafc; } .card-h { background: #1d3557; color: white; padding: 10px; font-weight: bold; font-size: 12pt; } .card-b { padding: 12px; } .badge { background: #e63946; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9pt; float: right; }</style></head><body><div class='header'><div class='title'>REPARTO DE OPERARIOS EN PLANTA</div><div>Estrategia Dinámica Balanceada</div></div>"
 
     for idx, (operario, datos) in enumerate(sorted(resultado.items())):
         sat_p = datos['carga_total'] * 100
         color_borde = "#e63946" if sat_p > 97.0 else "#1d3557"
         
-        # Guardar en layout de impresión HTML
         html_print += f"<div class='card'><div class='card-h'>{operario} <span class='badge'>{sat_p:.1f}% Carga</span></div><div class='card-b'><ul>"
         
         with cols_res[idx % 4]:
-            st.markdown(f"""
-                <div style='background-color: #f8fafc; border: 1px solid #cbd5e1; border-top: 5px solid {color_borde}; padding: 15px; border-radius: 6px; margin-bottom: 10px;'>
-                    <h4 style='margin:0; color:#1d3557;'>👤 {operario}</h4>
-                    <p style='margin:5px 0; font-size:15px;'><b>Carga:</b> <code style='color:#e63946;'>{sat_p:.1f}%</code></p>
-                    <hr style='margin:8px 0; border:0; border-top:1px solid #e2e8f0;'>
-            """, unsafe_with_html=True)
+            st.markdown(f"<div style='background-color: #f8fafc; border: 1px solid #cbd5e1; border-top: 5px solid {color_borde}; padding: 15px; border-radius: 6px; margin-bottom: 10px;'><h4 style='margin:0; color:#1d3557;'>👤 {operario}</h4><p style='margin:5px 0; font-size:15px;'><b>Carga:</b> <code style='color:#e63946;'>{sat_p:.1f}%</code></p><hr style='margin:8px 0; border:0; border-top:1px solid #e2e8f0;'>", unsafe_with_html=True)
             
             for m in datos["maquinas"]:
                 st.write(f"• **Máq. {m}** ({WORKLOAD_MAESTRO[m]*100:.1f}%)")
@@ -184,24 +167,28 @@ if st.session_state.maquinas_activas:
         html_print += "</ul></div></div>"
     html_print += "</body></html>"
 
-    # BOTÓN DE IMPRESIÓN DIRECTA CON FORMATO ESTILIZADO ALINEADO
     st.write(" ")
     st.download_button(
         label="🖨️ Imprimir / Guardar Reporte del Turno (Layout Web)",
         data=html_print,
-        file_name=f"Plan_Turno_{datetime.now().strftime('%d%M%Y')}.html",
+        file_name=f"Plan_Turno_{datetime.now().strftime('%d%m%Y')}.html",
         mime="text/html"
     )
 
-# --- CONFIGURACIONES MOVIDAS AL FONDO DE LA PÁGINA ---
+# --- CONFIGURACIONES AL FONDO DE LA PÁGINA ---
 st.write("---")
 st.header("⚙️ 2. Panel de Ajuste y Configuración de Planta")
 
-st.session_state.maquinas_activas = st.multiselect(
+m_seleccionadas = st.multiselect(
     "Modifique las máquinas activas en producción:",
     options=list(WORKLOAD_MAESTRO.keys()),
     default=st.session_state.maquinas_activas
 )
+
+# Detectar si cambiaron las máquinas activas para relanzar la app de forma segura
+if m_seleccionadas != st.session_state.maquinas_activas:
+    st.session_state.maquinas_activas = m_seleccionadas
+    st.rerun()
 
 st.subheader("🔒 Forzar Asignación Manual y Feedback ML")
 if st.session_state.maquinas_activas:
@@ -209,8 +196,18 @@ if st.session_state.maquinas_activas:
     for idx, m in enumerate(sorted(st.session_state.maquinas_activas)):
         with col_tab[idx % 3]:
             with st.expander(f"⚙️ Parámetros Máquina {m}", expanded=False):
-                op_m = st.text_input("Fijar a operario:", value="", key=f"m_{m}", placeholder="Ej: Operario 1")
+                
+                # Gestión de prioridad interactiva
+                prio_txt = st.selectbox("Prioridad:", ["Media", "Alta", "Baja"], key=f"p_sel_{m}", index=1)
+                prio_map = {"Alta": 1, "Media": 2, "Baja": 3}
+                st.session_state.prioridades[m] = prio_map[prio_txt]
+                
+                # Asignación manual de operario fijo
+                op_m = st.text_input("Fijar a operario:", value="", key=f"m_input_{m}", placeholder="Ej: Operario 1")
                 if op_m.strip():
-                    asignaciones_manuales[m] = op_m.strip()
-                    mot = st.radio("Motivo:", ["Condiciones de proceso", "Error distancia", "Baja saturacion", "Error coherencia"], key=f"mot_{m}")
+                    st.session_state.asignaciones_manuales[m] = op_m.strip()
+                    mot = st.radio("Motivo del cambio:", ["Condiciones de proceso", "Error distancia", "Baja saturacion", "Error coherencia"], key=f"mot_radio_{m}")
                     registrar_evento_ml(m, mot, op_m.strip())
+                elif m in st.session_state.asignaciones_manuales:
+                    # Limpiar si el usuario borra el campo de texto
+                    del st.session_state.asignaciones_manuales[m]
