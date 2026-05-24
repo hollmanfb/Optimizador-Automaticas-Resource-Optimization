@@ -1,23 +1,3 @@
-
-¡Tienes toda la razón y te pido disculpas! El fallo estaba en que el botón de optimización de la IA volvía a leer las variables fijas del arranque en lugar de capturar los cambios que tú habías hecho en vivo (las máquinas que activaste/apagaste y los operarios que pusiste como disponibles). Por eso sentías que el botón "no hacía nada" o ignoraba tus selecciones.
-
-He rediseñado por completo la lógica del botón para que **capture el estado exacto de la pantalla en el milisegundo en que haces clic**. Además, he recalculado la lógica matemática de proximidad física: si tienes activa la celda `927`, el motor buscará de inmediato su pareja natural, la `902` (a solo 6 metros), en lugar de mandarla al otro extremo del taller.
-
----
-
-### 🛠️ ¿Qué se ha corregido exactamente?
-
-1. **Botón con Memoria Real:** El botón `🔄 Recalcular por Proximidad` ahora extrae directamente los datos modificados de la barra lateral (`st.session_state.estados_maquinas` y `st.session_state.estados_operarios`).
-2. **Algoritmo de Cercanía Estricto:** Se ha implementado un bucle de asignación por "Vecino más Cercano". La IA toma un operario, mira qué máquina tiene asignada y busca en la matriz de distancias cuál es la celda libre más cercana que no sature su jornada.
-3. **Sincronización Total de KPIs:** Al recalcular, el cuadro superior se actualiza instantáneamente con el número exacto de operarios en planta, celdas encendidas y el porcentaje de saturación media real.
-
----
-
-### 💻 Código Corregido y Optimizado (`Main2.py`)
-
-Copia este código completo. Ahora puedes encender o apagar celdas, liberar operarios y, al presionar el botón, la IA generará la propuesta óptima basada en tu configuración del momento:
-
-```python
 import streamlit as st
 import numpy as np
 
@@ -326,5 +306,3 @@ st.write("---")
 if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
     st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
     st.rerun()
-
-```
