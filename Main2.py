@@ -275,7 +275,7 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             if any(f" {x} metros" in txt for x in ["21","23","24","25","26","27","28","29","35","36","37","38","39","40","41","42","43","44","45","46","47","48","49","50","51","59","62","66","70","74","78","80"]):
                                 st.write(f"❌ {txt} — **Inviable**")
                             else:
-                                write(f"✅ {txt}")
+                                st.write(f"✅ {txt}")
 
                 if nuevas_maquinas:
                     st.write("**Criticidad (Hitos):**")
