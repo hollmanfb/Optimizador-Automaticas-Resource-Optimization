@@ -55,7 +55,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion[op_destino].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # REGLA DE EMPAREJAMIENTO VECINDAD OPTIMA: (927 ↔️ 902)
+    # REGLA DE EMPAREJAMIENTO VECINDAD OPTIMA SOLICITADA: (927 ↔️ 902)
     if "927" in maquinas_por_asignar and "902" in maquinas_por_asignar:
         ops_dispo_reparto = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
         if ops_dispo_reparto:
@@ -101,7 +101,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Fase 4: Desborde de seguridad contra celdas huérfanas
+    # Fase 4: Desborde de seguridad estricto contra celdas huérfanas residuales
     for m in list(maquinas_por_asignar):
         mejor_op_desborde = None
         menor_distancia_desborde = float('inf')
@@ -127,6 +127,20 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
 # 3. CONTROL DE SESIÓN Y BLINDAJE ANTI-CONGELAMIENTO
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
+
+# Inyeccion de estilos CSS para ocultar barras de streamlit al mandar a imprimir en papel/PDF
+st.markdown("""
+    <style>
+    @media print {
+        header, [data-testid="stSidebar"], button, footer, .stButton {
+            display: none !important;
+        }
+        [data-testid="stMainBlockContainer"] {
+            padding: 0px !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 if "estados_maquinas" not in st.session_state or not isinstance(st.session_state.estados_maquinas, dict):
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
@@ -207,9 +221,11 @@ with kpi2:
 with kpi3:
     st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
 
+# Corrección de cobertura cruzada para evitar celdas huérfanas fantasma
 todas_las_maquinas_en_uso = []
-for m_list in st.session_state.propuesta_actual.values():
-    todas_las_maquinas_en_uso.extend(m_list)
+for op_k in ops_activos:
+    todas_las_maquinas_en_uso.extend(st.session_state.propuesta_actual.get(op_k, []))
+    
 maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 
 if maquinas_faltantes:
@@ -238,15 +254,22 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
             with st.container(border=True):
                 st.markdown(f"### 👤 {operario}")
                 
+                # Exclusión cruzada reactiva
                 maquinas_ocupadas_por_otros = []
                 for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
-                    if op_ref != operario:
+                    if op_ref != operario and st.session_state.estados_operarios.get(op_ref) == "Disponible":
                         maquinas_ocupadas_por_otros.extend(maqs_ref)
                 
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                nuevas_maquinas = st.multiselect("Asignar celdas:", options=opciones_visibles, default=maquinas_del_operario, key=f"ms_tarjeta_{operario}")
+                # SOLUCIÓN DE DESFASADO MULTISELECT: Sincronizamos las claves dinámicas usando los estados de la propuesta actual
+                nuevas_maquinas = st.multiselect(
+                    "Asignar celdas:", 
+                    options=opciones_visibles, 
+                    default=maquinas_del_operario, 
+                    key=f"ms_v4_op_{operario}_{hash(tuple(maquinas_del_operario))}"
+                )
                 
                 if nuevas_maquinas != maquinas_del_operario:
                     st.session_state.propuesta_actual[operario] = nuevas_maquinas
@@ -302,9 +325,29 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             st.session_state.prioridades_estrellas[m] = prio_estrella
 
 # -------------------------------------------------------------------------
-# 6. RECALCULO DE IA ASOCIADO FIELMENTE A LOS FILTROS ACTIVOS
+# 6. ACCIONES COMUNES (RECALCULO IA & BOTÓN DE IMPRESIÓN DIRECTA)
 # -------------------------------------------------------------------------
 st.write("---")
-if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
-    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
-    st.rerun()
+c_recalc, c_print = st.columns(2)
+
+with c_recalc:
+    if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
+        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+        st.rerun()
+
+with c_print:
+    # Ejecuta el puente javascript nativo del navegador abriendo el menu de impresion del sistema operativo limpio de barras laterales
+    st.markdown("""
+        <button onclick="window.print()" style="
+            width: 100%; 
+            background-color: #2e7d32; 
+            color: white; 
+            padding: 0.5rem; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer;
+            font-weight: bold;
+            height: 43px;">
+            🖨️ Imprimir Plan del Turno / Guardar PDF
+        </button>
+    """, unsafe_allow_html=True)
