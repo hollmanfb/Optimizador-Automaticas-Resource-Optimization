@@ -27,7 +27,7 @@ MATRIZ_DISTANCIAS = {
     "922": {"902":21, "903":21, "904":43, "905":12, "906":19, "907":17, "911":1, "916":40, "917":70, "922":0, "923":50, "924":36, "925":10, "926":13, "927":37, "928":62},
     "923": {"902":27, "903":26, "904":13, "905":28, "906":36, "907":38, "911":37, "916":10, "917":38, "922":50, "923":0, "924":19, "925":42, "926":46, "927":22, "928":46},
     "924": {"902":15, "903":12, "904":24, "905":18, "906":20, "907":22, "911":27, "916":21, "917":74, "922":36, "923":19, "924":0, "925":24, "926":28, "927":20, "928":45},
-    "925": {"902":12, "903":15, "904":42, "905":3, "906":18, "907":16, "911":3, "916":39, "917":78, "922":10, "923":42, "924":24, "925":0, "926":3, "927":35, "928":62},
+    "925": {"902":12, "903:15", "904":42, "905":3, "906":18, "907":16, "911":3, "916":39, "917":78, "922":10, "923":42, "924":24, "925":0, "926":3, "927":35, "928":62},
     "926": {"902":26, "903":20, "904":45, "905":6, "906":21, "907":19, "911":1, "916":42, "917":80, "922":13, "923":46, "924":28, "925":3, "926":0, "927":38, "928":66},
     "927": {"902":6, "903":11, "904":15, "905":18, "906":12, "907":14, "911":27, "916":12, "917":47, "922":37, "923":22, "924":20, "925":35, "926":38, "927":0, "928":25},
     "928": {"902":40, "903":40, "904":21, "905":35, "906":37, "907":39, "911":44, "916":26, "917":16, "922":62, "923":46, "924":45, "925":62, "926":66, "927":25, "928":0}
@@ -37,7 +37,7 @@ HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
 LISTA_7_OPERARIOS = [f"Operario {i}" for i in range(1, 8)]
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO OPTIMIZADOR EN VIVO POR VECINO MÁS CERCANO (PROXIMIDAD REAL)
+# 2. ALGORITMO OPTIMIZADOR INTELIGENTE POR VECINO MÁS CERCANO (PROXIMIDAD)
 # -------------------------------------------------------------------------
 def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     asignacion = {op: [] for op in LISTA_7_OPERARIOS}
@@ -46,7 +46,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     if not operarios_disponibles:
         return asignacion
 
-    # Paso 1: Celdas de Carga Completa (Ej: 917 o 924 con saturación de 1.00)
+    # Fase 1: Celdas de Carga Crítica Mayor o Igual al 100%
     ops_pool = [o for o in operarios_disponibles]
     for m in list(maquinas_por_asignar):
         if WORKLOAD_MAESTRO.get(m, 0) >= 1.00:
@@ -55,10 +55,9 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion[op_elegido].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # Ordenar el resto por mayor carga para asegurar cobertura
     maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
 
-    # Paso 2: Agrupación Estricta por Cercanía (Garantiza emparejar 927 con 902)
+    # Fase 2: Enlace por Proximidad Real Física (Busca parejas óptimas como 927-902)
     for m in list(maquinas_por_asignar):
         mejor_op = None
         menor_distancia_op = float('inf')
@@ -87,7 +86,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Paso 3: Desborde por cercanía física para evitar celdas sueltas
+    # Fase 3: Desborde Controlado de Proximidad para Evitar Celdas Huérfanas
     for m in list(maquinas_por_asignar):
         mejor_op_desborde = None
         menor_distancia_desborde = float('inf')
@@ -110,29 +109,30 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     return asignacion
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ GRÁFICA CONFIGURABLE (STREAMLIT)
+# 3. CONTROL DE SESIÓN Y BLINDAJE ANTI-CONGELAMIENTO
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-if "estados_maquinas" not in st.session_state:
+# Forzar inicialización limpia si hay inconsistencias previas en la caché
+if "estados_maquinas" not in st.session_state or not isinstance(st.session_state.estados_maquinas, dict):
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
     for desactiva in ["904", "906", "916", "917", "925", "926", "928"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
-if "estados_operarios" not in st.session_state:
+if "estados_operarios" not in st.session_state or not isinstance(st.session_state.estados_operarios, dict):
     st.session_state.estados_operarios = {op: "Disponible" if idx < 5 else "Día Libre / Ausente" for idx, op in enumerate(LISTA_7_OPERARIOS)}
 
 if "prioridades_estrellas" not in st.session_state:
     st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
 
-# Leer variables en tiempo real modificadas por el usuario
+# Lectura dinámica de los interruptores de la planta
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
-if "propuesta_actual" not in st.session_state:
+if "propuesta_actual" not in st.session_state or not isinstance(st.session_state.propuesta_actual, dict):
     st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
 
-# --- PANEL LATERAL DE SELECCIÓN ---
+# --- PANEL DE CONTROL LATERAL ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     
@@ -173,7 +173,7 @@ with st.sidebar:
                 st.rerun()
 
 # -------------------------------------------------------------------------
-# 4. TABLERO DE INDICADORES (KPIs REQUERIDOS)
+# 4. TABLERO CENTRAL DE KPIs (RESUMEN EXIGIDO)
 # -------------------------------------------------------------------------
 st.title("🏭 Planificador y Balanceo Dinámico de Celdas")
 
@@ -207,7 +207,7 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. DESPLIEGUE DE FICHA DE OPERARIO CON BLOQUEO EXCLUSIVO ANTI-DUPLICADOS
+# 5. MATRIZ DE FICHAS CON FILTRO DE EXCLUSIÓN CRUZADA (BLOQUEO MANUAL)
 # -------------------------------------------------------------------------
 st.subheader("🚀 Asignación del Turno (Modificación Manual Protegida)")
 cols_res = st.columns(4)
@@ -289,7 +289,7 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             st.session_state.prioridades_estrellas[m] = prio_estrella
 
 # -------------------------------------------------------------------------
-# 6. BOTÓN DE RECALCULO GENERAL VINCULADO CORRECTAMENTE AL ENTORNO EN VIVO
+# 6. RECALCULO DE IA ASOCIADO FIELMENTE A LOS FILTROS ACTIVOS
 # -------------------------------------------------------------------------
 st.write("---")
 if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
