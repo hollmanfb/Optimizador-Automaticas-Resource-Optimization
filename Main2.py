@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 
 # -------------------------------------------------------------------------
@@ -37,7 +38,7 @@ HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
 LISTA_7_OPERARIOS = [f"Operario {i}" for i in range(1, 8)]
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO OPTIMIZADOR ADAPTADO CON REGLA GEOMÉTRICA DE VECINDAD
+# 2. ALGORITMO OPTIMIZADOR AJUSTADO SEGÚN EXCEL MAESTRO DE REFERENCIA
 # -------------------------------------------------------------------------
 def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     asignacion = {op: [] for op in LISTA_7_OPERARIOS}
@@ -46,108 +47,102 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     if not operarios_disponibles:
         return asignacion
 
-    # Fase 1: Hitos Dedicados Estrictos (Carga = 100%)
-    mapeo_dedicado = {"917": "Operario 4", "924": "Operario 6"}
-    for m in list(maquinas_por_asignar):
-        if m in mapeo_dedicado:
-            op_destino = mapeo_dedicado[m]
-            if op_destino in operarios_disponibles:
-                asignacion[op_destino].append(m)
+    # Regla 1: Asignaciones fijas estructurales de Hitos e Hilera Clave
+    mapeo_estricto = {
+        "917": "Operario 4",
+        "924": "Operario 6",
+        "928": "Operario 7"
+    }
+    
+    for m, op in mapeo_estricto.items():
+        if m in maquinas_por_asignar and op in operarios_disponibles:
+            asignacion[op].append(m)
+            maquinas_por_asignar.remove(m)
+
+    # Regla 2: Pareja Optimizada Operario 1 (927 y 902)
+    if "Operario 1" in operarios_disponibles:
+        for m in ["927", "902"]:
+            if m in maquinas_por_asignar:
+                asignacion["Operario 1"].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # REGLA DE EMPAREJAMIENTO VECINDAD OPTIMA SOLICITADA: (927 ↔️ 902)
-    if "927" in maquinas_por_asignar and "902" in maquinas_por_asignar:
-        ops_dispo_reparto = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
-        if ops_dispo_reparto:
-            op_pareja = ops_dispo_reparto[0]
-            asignacion[op_pareja].extend(["927", "902"])
-            maquinas_por_asignar.remove("927")
-            maquinas_por_asignar.remove("902")
+    # Regla 3: Bloque del Pasillo Operario 2 (922, 911, 905)
+    if "Operario 2" in operarios_disponibles:
+        for m in ["922", "911", "905"]:
+            if m in maquinas_por_asignar:
+                asignacion["Operario 2"].append(m)
+                maquinas_por_asignar.remove(m)
 
-    # Ordenar el resto de celdas por volumen de carga para el balanceo
+    # Regla 4: Bloque Operario 3 (906, 907, 903)
+    if "Operario 3" in operarios_disponibles:
+        for m in ["906", "907", "903"]:
+            if m in maquinas_por_asignar:
+                asignacion["Operario 3"].append(m)
+                maquinas_por_asignar.remove(m)
+
+    # Distribución de desborde dinámico por cercanía física para cualquier otra máquina restante
     maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
+    ops_restantes = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
+    if not ops_restantes:
+        ops_restantes = list(operarios_disponibles)
 
-    # Pool de operarios activos restantes
-    ops_pool = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
-    if not ops_pool:
-        ops_pool = [o for o in operarios_disponibles]
-
-    # Fase 3: Distribución general optimizada por cercanía física (Máx 110%)
     for m in list(maquinas_por_asignar):
         mejor_op = None
-        menor_distancia_op = float('inf')
+        menor_distancia = float('inf')
         
-        for op in ops_pool:
+        for op in ops_restantes:
             maqs_del_op = asignacion[op]
             carga_actual = sum([WORKLOAD_MAESTRO[x] for x in maqs_del_op])
             
-            todas_en_pasillo = all(x in HEURISTICA_PASILLO for x in maqs_del_op + [m])
-            tope_limite = 1.35 if todas_en_pasillo else MAX_SATURACION_ESTANDAR
-            
-            if carga_actual + WORKLOAD_MAESTRO[m] <= tope_limite:
+            if carga_actual + WORKLOAD_MAESTRO[m] <= 1.20:
                 if maqs_del_op:
                     dist_eval = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_del_op])
                 else:
                     dist_eval = 0.0
                 
-                if maqs_del_op and any(MATRIZ_DISTANCIAS[m].get(ya, 0) > DISTANCIA_CRITICA_MAX for ya in maqs_del_op):
-                    continue
-
-                if dist_eval < menor_distancia_op:
-                    menor_distancia_op = dist_eval
+                if dist_eval < menor_distancia:
+                    menor_distancia = dist_eval
                     mejor_op = op
                     
         if mejor_op:
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Fase 4: Desborde de seguridad estricto contra celdas huérfanas residuales
+    # Forzado de seguridad final contra huérfanos
     for m in list(maquinas_por_asignar):
-        mejor_op_desborde = None
-        menor_distancia_desborde = float('inf')
-        
-        for op in operarios_disponibles:
-            maqs_del_op = asignacion[op]
-            if maqs_del_op:
-                dist_eval = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_del_op])
-            else:
-                dist_eval = 0.0
-                
-            if dist_eval < menor_distancia_desborde:
-                menor_distancia_desborde = dist_eval
-                mejor_op_desborde = op
-                
-        if mejor_op_desborde:
-            asignacion[mejor_op_desborde].append(m)
-            maquinas_por_asignar.remove(m)
+        op_menos_cargado = min(operarios_disponibles, key=lambda o: sum([WORKLOAD_MAESTRO[x] for x in asignacion[o]]))
+        asignacion[op_menos_cargado].append(m)
 
     return asignacion
 
 # -------------------------------------------------------------------------
-# 3. CONTROL DE SESIÓN Y BLINDAJE ANTI-CONGELAMIENTO
+# 3. CONTROL DE SESIÓN Y CONFIGURACIÓN DE PÁGINA
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-# Inyeccion de estilos CSS para ocultar barras de streamlit al mandar a imprimir en papel/PDF
+# Estilos CSS avanzados para el panel de impresión y fijar colores de botones activos
 st.markdown("""
     <style>
     @media print {
-        header, [data-testid="stSidebar"], button, footer, .stButton {
+        header, [data-testid="stSidebar"], .stButton, button, footer, hr {
             display: none !important;
         }
         [data-testid="stMainBlockContainer"] {
-            padding: 0px !important;
+            padding: 10px !important;
         }
+    }
+    div[data-testid="stSubheader"] {
+        font-weight: bold;
     }
     </style>
 """, unsafe_allow_html=True)
 
-if "estados_maquinas" not in st.session_state or not isinstance(st.session_state.estados_maquinas, dict):
+if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
     for desactiva in ["904", "916", "925", "926"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
-if "estados_operarios" not in st.session_state or not isinstance(st.session_state.estados_operarios, dict):
+if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_7_OPERARIOS}
 
 if "prioridades_estrellas" not in st.session_state:
@@ -156,7 +151,7 @@ if "prioridades_estrellas" not in st.session_state:
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
-if "propuesta_actual" not in st.session_state or not isinstance(st.session_state.propuesta_actual, dict):
+if "propuesta_actual" not in st.session_state:
     st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
 
 # --- PANEL DE CONTROL LATERAL ---
@@ -182,17 +177,19 @@ with st.sidebar:
         
         c_tr, c_dl = st.columns(2)
         with c_tr:
-            if st.button("🟢 Activa", key=f"btn_tr_{m}", use_container_width=True, disabled=(estado_actual == "Trabajando")):
+            # Lógica corregida: Se deshabilita (bloquea seleccionado) si YA está trabajando
+            if st.button("🟢 Activa", key=f"btn_tr_{m}", use_container_width=True, type="primary" if estado_actual == "Trabajando" else "secondary", disabled=(estado_actual == "Trabajando")):
                 st.session_state.estados_maquinas[m] = "Trabajando"
                 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
                 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
                 st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
                 st.rerun()
         with c_dl:
-            if st.button("🔴 Parada", key=f"btn_dl_{m}", use_container_width=True, disabled=(estado_actual == "Día Libre")):
+            # Lógica corregida: Se deshabilita si YA está parada de la línea
+            if st.button("🔴 Parada", key=f"btn_dl_{m}", use_container_width=True, type="primary" if estado_actual == "Día Libre" else "secondary", disabled=(estado_actual == "Día Libre")):
                 st.session_state.estados_maquinas[m] = "Día Libre"
                 for op in LISTA_7_OPERARIOS:
-                    if m in st.session_state.propuesta_actual[op]:
+                    if m in st.session_state.propuesta_actual.get(op, []):
                         st.session_state.propuesta_actual[op].remove(m)
                 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
                 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
@@ -221,7 +218,6 @@ with kpi2:
 with kpi3:
     st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
 
-# Corrección de cobertura cruzada para evitar celdas huérfanas fantasma
 todas_las_maquinas_en_uso = []
 for op_k in ops_activos:
     todas_las_maquinas_en_uso.extend(st.session_state.propuesta_actual.get(op_k, []))
@@ -231,12 +227,12 @@ maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 if maquinas_faltantes:
     st.error(f"⚠️ **ATENCIÓN:** Hay celdas trabajando sin operario asignado: {', '.join(sorted(maquinas_faltantes))}")
 else:
-    st.success("✅ Cobertura Correcta: El 100% de las celdas activas tienen un operario a cargo.")
+    st.success("✅ Cobertura Correcta: El 100% de las celdas activas tienen asignado un operario.")
 
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. MATRIZ DE FICHAS CON FILTRO DE EXCLUSIÓN CRUZADA (BLOQUEO MANUAL)
+# 5. MATRIZ DE FICHAS CON EXCLUSIÓN CRUZADA SIN DESFASE VISUAL
 # -------------------------------------------------------------------------
 st.subheader("🚀 Asignación del Turno (Modificación Manual Protegida)")
 cols_res = st.columns(4)
@@ -254,7 +250,6 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
             with st.container(border=True):
                 st.markdown(f"### 👤 {operario}")
                 
-                # Exclusión cruzada reactiva
                 maquinas_ocupadas_por_otros = []
                 for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
                     if op_ref != operario and st.session_state.estados_operarios.get(op_ref) == "Disponible":
@@ -263,12 +258,12 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                # SOLUCIÓN DE DESFASADO MULTISELECT: Sincronizamos las claves dinámicas usando los estados de la propuesta actual
+                # Clave hash dinámica única basada en el contenido exacto para forzar render correcto del multiselect
                 nuevas_maquinas = st.multiselect(
                     "Asignar celdas:", 
                     options=opciones_visibles, 
                     default=maquinas_del_operario, 
-                    key=f"ms_v4_op_{operario}_{hash(tuple(maquinas_del_operario))}"
+                    key=f"ms_sync_op_{operario}_{hash(tuple(maquinas_del_operario))}"
                 )
                 
                 if nuevas_maquinas != maquinas_del_operario:
@@ -286,7 +281,6 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 sat_p = carga_real * 100
                 
                 aplica_excepcion_pasillo = len(nuevas_maquinas) > 0 and all(m in HEURISTICA_PASILLO for m in nuevas_maquinas)
-                tope_limite = 135.0 if aplica_excepcion_pasillo else MAX_SATURACION_ESTANDAR
                 
                 if sat_p > 110.0:
                     st.error(f"🔴 Sobrecarga Crítica: {sat_p:.1f}% (Máx 110%)")
@@ -325,7 +319,7 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             st.session_state.prioridades_estrellas[m] = prio_estrella
 
 # -------------------------------------------------------------------------
-# 6. ACCIONES COMUNES (RECALCULO IA & BOTÓN DE IMPRESIÓN DIRECTA)
+# 6. PANEL DE ACCIONES FINALES (IA + IMPRESIÓN BLINDADA INTERNA)
 # -------------------------------------------------------------------------
 st.write("---")
 c_recalc, c_print = st.columns(2)
@@ -336,18 +330,21 @@ with c_recalc:
         st.rerun()
 
 with c_print:
-    # Ejecuta el puente javascript nativo del navegador abriendo el menu de impresion del sistema operativo limpio de barras laterales
-    st.markdown("""
-        <button onclick="window.print()" style="
+    st.markdown("**🖨️ Acciones de Reporte**")
+    # Componente nativo aislado para forzar la orden de impresión del sistema de forma segura
+    components.html("""
+        <button onclick="window.parent.print()" style="
             width: 100%; 
-            background-color: #2e7d32; 
+            background-color: #1e7e34; 
             color: white; 
-            padding: 0.5rem; 
+            padding: 10px; 
             border: none; 
-            border-radius: 4px; 
+            border-radius: 5px; 
             cursor: pointer;
+            font-size: 16px;
             font-weight: bold;
-            height: 43px;">
-            🖨️ Imprimir Plan del Turno / Guardar PDF
+            font-family: sans-serif;
+            box-shadow: 0px 2px 4px rgba(0,0,0,0.1);">
+            Generar Reporte PDF / Imprimir Turno Activo
         </button>
-    """, unsafe_allow_html=True)
+    """, height=50)
