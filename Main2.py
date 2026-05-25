@@ -55,11 +55,11 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion[op_destino].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # REGLA MAESTRA SOLICITADA: Forzar el emparejamiento lógico óptimo de vecindad (927 ↔️ 902)
+    # REGLA DE EMPAREJAMIENTO VECINDAD OPTIMA: (927 ↔️ 902)
     if "927" in maquinas_por_asignar and "902" in maquinas_por_asignar:
         ops_dispo_reparto = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
         if ops_dispo_reparto:
-            op_pareja = ops_dispo_reparto[0]  # Se asigna al primer operario libre general disponible
+            op_pareja = ops_dispo_reparto[0]
             asignacion[op_pareja].extend(["927", "902"])
             maquinas_por_asignar.remove("927")
             maquinas_por_asignar.remove("902")
@@ -130,7 +130,6 @@ st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
 if "estados_maquinas" not in st.session_state or not isinstance(st.session_state.estados_maquinas, dict):
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
-    # Configuración de celdas libres iniciales según histórico
     for desactiva in ["904", "916", "925", "926"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
@@ -293,4 +292,19 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             else:
                                 st.write(f"✅ {txt}")
 
-                if
+                if nuevas_maquinas:
+                    st.write("**Criticidad (Hitos):**")
+                    for m in nuevas_maquinas:
+                        c1, c2 = st.columns([1, 2])
+                        with c1: st.caption(f"🤖 **M-{m}**")
+                        with c2:
+                            prio_estrella = st.selectbox(f"Prio_{operario}_{m}", options=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"], index=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"].index(st.session_state.prioridades_estrellas.get(m, "⭐⭐ Media")), label_visibility="collapsed", key=f"star_sel_{operario}_{m}")
+                            st.session_state.prioridades_estrellas[m] = prio_estrella
+
+# -------------------------------------------------------------------------
+# 6. RECALCULO DE IA ASOCIADO FIELMENTE A LOS FILTROS ACTIVOS
+# -------------------------------------------------------------------------
+st.write("---")
+if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
+    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+    st.rerun()
