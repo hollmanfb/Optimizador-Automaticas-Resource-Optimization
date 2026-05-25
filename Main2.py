@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 
 # -------------------------------------------------------------------------
-# 1. BASE DE DATOS MAESTRA (MÉTODOS Y TIEMPOS - MEDMIX 2026)
+# 1. BASE DE DATOS MAESTRA (MÉTODOS Y TIEMPOS - MEDMIX)
 # -------------------------------------------------------------------------
 MAX_SATURACION_ESTANDAR = 0.97  
 DISTANCIA_CRITICA_MAX = 20.0  
@@ -37,17 +37,16 @@ HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
 LISTA_7_OPERARIOS = [f"Operario {i}" for i in range(1, 8)]
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO OPTIMIZADOR REAL-TIME POR PROXIMIDAD FÍSICA
+# 2. ALGORITMO OPTIMIZADOR EN VIVO POR VECINO MÁS CERCANO (PROXIMIDAD REAL)
 # -------------------------------------------------------------------------
 def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
-    # Inicializar todas las fichas vacías
     asignacion = {op: [] for op in LISTA_7_OPERARIOS}
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
     if not operarios_disponibles:
         return asignacion
 
-    # Paso 1: Asignar Celdas Dedicadas (Carga >= 100% como la 917 o 924)
+    # Paso 1: Celdas de Carga Completa (Ej: 917 o 924 con saturación de 1.00)
     ops_pool = [o for o in operarios_disponibles]
     for m in list(maquinas_por_asignar):
         if WORKLOAD_MAESTRO.get(m, 0) >= 1.00:
@@ -56,10 +55,10 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion[op_elegido].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # Ordenar las celdas restantes de mayor a menor carga de trabajo
+    # Ordenar el resto por mayor carga para asegurar cobertura
     maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
 
-    # Paso 2: Asignación por cercanía estricta (Ej: Unir 927 con 902)
+    # Paso 2: Agrupación Estricta por Cercanía (Garantiza emparejar 927 con 902)
     for m in list(maquinas_por_asignar):
         mejor_op = None
         menor_distancia_op = float('inf')
@@ -68,18 +67,15 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             maqs_del_op = asignacion[op]
             carga_actual = sum([WORKLOAD_MAESTRO[x] for x in maqs_del_op])
             
-            # Verificar si aplica la tolerancia especial del pasillo técnico
             todas_en_pasillo = all(x in HEURISTICA_PASILLO for x in maqs_del_op + [m])
             tope_limite = 1.30 if todas_en_pasillo else MAX_SATURACION_ESTANDAR
             
             if carga_actual + WORKLOAD_MAESTRO[m] <= tope_limite:
-                # Si ya tiene máquinas, evaluar la distancia física real con la nueva
                 if maqs_del_op:
                     dist_eval = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_del_op])
                 else:
-                    dist_eval = 0.0 # Si está vacío, la distancia inicial es cero
+                    dist_eval = 0.0
                 
-                # Descartar si viola el límite crítico de traslado (20 metros)
                 if maqs_del_op and any(MATRIZ_DISTANCIAS[m].get(ya, 0) > DISTANCIA_CRITICA_MAX for ya in maqs_del_op):
                     continue
 
@@ -91,14 +87,13 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Paso 3: Desborde Técnico Inteligente para evitar celdas desatendidas
+    # Paso 3: Desborde por cercanía física para evitar celdas sueltas
     for m in list(maquinas_por_asignar):
         mejor_op_desborde = None
         menor_distancia_desborde = float('inf')
         
         for op in operarios_disponibles:
             maqs_del_op = asignacion[op]
-            
             if maqs_del_op:
                 dist_eval = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_del_op])
             else:
@@ -115,14 +110,12 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
     return asignacion
 
 # -------------------------------------------------------------------------
-# 3. INTERFAZ GRÁFICA Y CONTROL DE ESTADOS (STREAMLIT)
+# 3. INTERFAZ GRÁFICA CONFIGURABLE (STREAMLIT)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-# Inicialización del estado interno de la aplicación
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
-    # Escenario inicial estándar (algunas celdas paradas por defecto)
     for desactiva in ["904", "906", "916", "917", "925", "926", "928"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
@@ -132,14 +125,14 @@ if "estados_operarios" not in st.session_state:
 if "prioridades_estrellas" not in st.session_state:
     st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
 
-# Leer configuraciones activas del usuario en este instante
+# Leer variables en tiempo real modificadas por el usuario
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
 if "propuesta_actual" not in st.session_state:
     st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
 
-# --- PANEL DE CONTROL LATERAL (SIDEBAR) ---
+# --- PANEL LATERAL DE SELECCIÓN ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     
@@ -149,7 +142,6 @@ with st.sidebar:
         sel_op = st.selectbox(f"{op}:", options=["Disponible", "Día Libre / Ausente"], index=0 if estado_previo == "Disponible" else 1, key=f"sel_status_{op}")
         if sel_op != estado_previo:
             st.session_state.estados_operarios[op] = sel_op
-            # Al cambiar personal, recalculamos automáticamente para evitar errores
             maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
             ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
             st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
@@ -172,7 +164,6 @@ with st.sidebar:
         with c_dl:
             if st.button("🔴 Parada", key=f"btn_dl_{m}", use_container_width=True, disabled=(estado_actual == "Día Libre")):
                 st.session_state.estados_maquinas[m] = "Día Libre"
-                # Quitar la máquina de cualquier operario que la tuviera asignada
                 for op in LISTA_7_OPERARIOS:
                     if m in st.session_state.propuesta_actual[op]:
                         st.session_state.propuesta_actual[op].remove(m)
@@ -182,11 +173,10 @@ with st.sidebar:
                 st.rerun()
 
 # -------------------------------------------------------------------------
-# 4. TABLERO DE CONTROL Y PANEL DE KPIs (RESUMEN EXIGIDO)
+# 4. TABLERO DE INDICADORES (KPIs REQUERIDOS)
 # -------------------------------------------------------------------------
 st.title("🏭 Planificador y Balanceo Dinámico de Celdas")
 
-# Sincronizar conteos basados en lo que está renderizado en pantalla
 num_maquinas_trabajando = len(maquinas_activas)
 num_operarios_disponibles = len(ops_activos)
 
@@ -196,7 +186,6 @@ for op in ops_activos:
     cargas_reales_operarios.append(sum([WORKLOAD_MAESTRO.get(x, 0) for x in maqs_del_op]))
 saturacion_media_turno = (np.mean(cargas_reales_operarios) * 100) if cargas_reales_operarios else 0.0
 
-# Render del bloque de indicadores clave (KPIs)
 kpi1, kpi2, kpi3 = st.columns(3)
 with kpi1:
     st.metric(label="📊 Nº de Máquinas Trabajando", value=f"{num_maquinas_trabajando} Celdas")
@@ -205,7 +194,6 @@ with kpi2:
 with kpi3:
     st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
 
-# Alerta de celdas huérfanas
 todas_las_maquinas_en_uso = []
 for m_list in st.session_state.propuesta_actual.values():
     todas_las_maquinas_en_uso.extend(m_list)
@@ -219,9 +207,9 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. MATRIZ DE TARJETAS CON CANDADO ANTI-DUPLICADOS (MODIFICACIÓN MANUAL)
+# 5. DESPLIEGUE DE FICHA DE OPERARIO CON BLOQUEO EXCLUSIVO ANTI-DUPLICADOS
 # -------------------------------------------------------------------------
-st.subheader("🚀 1. Asignación del Turno (Modificación Manual Protegida)")
+st.subheader("🚀 Asignación del Turno (Modificación Manual Protegida)")
 cols_res = st.columns(4)
 
 for idx, operario in enumerate(LISTA_7_OPERARIOS):
@@ -237,24 +225,27 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
             with st.container(border=True):
                 st.markdown(f"### 👤 {operario}")
                 
-                # --- CANDADO INTERACTIVO DE EXCLUSIÓN MUTUA ---
                 maquinas_ocupadas_por_otros = []
                 for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
                     if op_ref != operario:
                         maquinas_ocupadas_por_otros.extend(maqs_ref)
                 
-                # Filtrado estricto: Una máquina no puede aparecer si otro ya la tiene seleccionada
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                # Dropdown multiselect con persistencia inmediata
                 nuevas_maquinas = st.multiselect("Asignar celdas:", options=opciones_visibles, default=maquinas_del_operario, key=f"ms_tarjeta_{operario}")
                 
                 if nuevas_maquinas != maquinas_del_operario:
                     st.session_state.propuesta_actual[operario] = nuevas_maquinas
                     st.rerun()
                 
-                # --- DESPLEGABLE INFORMATIVO DE CARGAS ---
+                st.markdown("**Detalle de Cargas:**")
+                if nuevas_maquinas:
+                    for m in nuevas_maquinas:
+                        st.write(f"• **Máquina {m}**: {WORKLOAD_MAESTRO.get(m, 0)*100:.1f}% carga")
+                else:
+                    st.caption("💤 Sin celdas asignadas.")
+
                 carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in nuevas_maquinas])
                 sat_p = carga_real * 100
                 
@@ -266,11 +257,10 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 elif sat_p > tope_limite:
                     st.warning(f"⚠️ Carga Elevada: {sat_p:.1f}%")
                 elif sat_p == 0:
-                    st.caption("💤 Sin celdas asignadas.")
+                    pass
                 else:
                     st.success(f"⚡ Carga Óptima: {sat_p:.1f}%")
 
-                # --- AUDITORÍA EN VIVO DE DISTANCIAS ---
                 if len(nuevas_maquinas) > 1:
                     distancias_texto = []
                     alerta_distancia = False
@@ -299,10 +289,9 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             st.session_state.prioridades_estrellas[m] = prio_estrella
 
 # -------------------------------------------------------------------------
-# 6. BOTÓN DE RECALCULO POR IA (CORREGIDO Y VINCULADO AL ESTADO VIVO)
+# 6. BOTÓN DE RECALCULO GENERAL VINCULADO CORRECTAMENTE AL ENTORNO EN VIVO
 # -------------------------------------------------------------------------
 st.write("---")
-# Ahora el botón lee dinámicamente las variables 'maquinas_activas' y 'ops_activos' configuradas arriba
 if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
     st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
     st.rerun()
