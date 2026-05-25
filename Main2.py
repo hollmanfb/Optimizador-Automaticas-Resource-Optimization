@@ -27,7 +27,7 @@ MATRIZ_DISTANCIAS = {
     "922": {"902":21, "903":21, "904":43, "905":12, "906":19, "907":17, "911":1, "916":40, "917":70, "922":0, "923":50, "924":36, "925":10, "926":13, "927":37, "928":62},
     "923": {"902":27, "903":26, "904":13, "905":28, "906":36, "907":38, "911":37, "916":10, "917":38, "922":50, "923":0, "924":19, "925":42, "926":46, "927":22, "928":46},
     "924": {"902":15, "903":12, "904":24, "905":18, "906":20, "907":22, "911":27, "916":21, "917":74, "922":36, "923":19, "924":0, "925":24, "926":28, "927":20, "928":45},
-    "925": {"902":12, "903:15", "904":42, "905":3, "906":18, "907":16, "911":3, "916":39, "917":78, "922":10, "923":42, "924":24, "925":0, "926":3, "927":35, "928":62},
+    "925": {"902":12, "903":15, "904":42, "905":3, "906":18, "907":16, "911":3, "916":39, "917":78, "922":10, "923":42, "924":24, "925":0, "926":3, "927":35, "928":62},
     "926": {"902":26, "903":20, "904":45, "905":6, "906":21, "907":19, "911":1, "916":42, "917":80, "922":13, "923":46, "924":28, "925":3, "926":0, "927":38, "928":66},
     "927": {"902":6, "903":11, "904":15, "905":18, "906":12, "907":14, "911":27, "916":12, "917":47, "922":37, "923":22, "924":20, "925":35, "926":38, "927":0, "928":25},
     "928": {"902":40, "903":40, "904":21, "905":35, "906":37, "907":39, "911":44, "916":26, "917":16, "922":62, "923":46, "924":45, "925":62, "926":66, "927":25, "928":0}
@@ -113,7 +113,6 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-# Forzar inicialización limpia si hay inconsistencias previas en la caché
 if "estados_maquinas" not in st.session_state or not isinstance(st.session_state.estados_maquinas, dict):
     st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
     for desactiva in ["904", "906", "916", "917", "925", "926", "928"]:
@@ -125,7 +124,6 @@ if "estados_operarios" not in st.session_state or not isinstance(st.session_stat
 if "prioridades_estrellas" not in st.session_state:
     st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
 
-# Lectura dinámica de los interruptores de la planta
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
@@ -277,7 +275,7 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                             if any(f" {x} metros" in txt for x in ["21","23","24","25","26","27","28","29","35","36","37","38","39","40","41","42","43","44","45","46","47","48","49","50","51","59","62","66","70","74","78","80"]):
                                 st.write(f"❌ {txt} — **Inviable**")
                             else:
-                                st.write(f"✅ {txt}")
+                                write(f"✅ {txt}")
 
                 if nuevas_maquinas:
                     st.write("**Criticidad (Hitos):**")
