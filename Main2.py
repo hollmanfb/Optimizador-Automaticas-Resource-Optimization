@@ -48,12 +48,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
         return asignacion
 
     # Regla 1: Asignaciones fijas estructurales de Hitos e Hilera Clave
-    mapeo_estricto = {
-        "917": "Operario 4",
-        "924": "Operario 6",
-        "928": "Operario 7"
-    }
-    
+    mapeo_estricto = {"917": "Operario 4", "924": "Operario 6", "928": "Operario 7"}
     for m, op in mapeo_estricto.items():
         if m in maquinas_por_asignar and op in operarios_disponibles:
             asignacion[op].append(m)
@@ -108,7 +103,6 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Forzado de seguridad final contra huérfanos
     for m in list(maquinas_por_asignar):
         op_menos_cargado = min(operarios_disponibles, key=lambda o: sum([WORKLOAD_MAESTRO[x] for x in asignacion[o]]))
         asignacion[op_menos_cargado].append(m)
@@ -120,19 +114,43 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-# Estilos CSS avanzados para el panel de impresión y fijar colores de botones activos
+# 🖨️ CSS DE ALTA PRECISIÓN PARA FORZAR IMPRESIÓN EN 1 HOJA LIMPIA
 st.markdown("""
     <style>
     @media print {
-        header, [data-testid="stSidebar"], .stButton, button, footer, hr {
+        /* Ocultar elementos interactivos pesados globales */
+        header, [data-testid="stSidebar"], .stButton, button, footer, hr, 
+        [data-testid="stMetricWidget"], .stAlert, [data-baseinput="true"], .stMultiSelect {
             display: none !important;
         }
+        
+        /* Ajustar contenedor principal de la hoja */
         [data-testid="stMainBlockContainer"] {
-            padding: 10px !important;
+            padding: 0px !important;
+            margin: 0px !important;
+            max-width: 100% !important;
         }
-    }
-    div[data-testid="stSubheader"] {
-        font-weight: bold;
+        
+        /* Ocultar los selectores interactivos de criticidad */
+        div[data-testid="stBlock"] div[data-testid="stBlock"] {
+            display: none !important;
+        }
+        
+        /* Forzar saltos de línea e inyección compacta */
+        .print-only-card {
+            border: 1px solid #000 !important;
+            padding: 8px !important;
+            margin-bottom: 5px !important;
+            border-radius: 4px !important;
+            background-color: #fff !important;
+            page-break-inside: avoid !important;
+        }
+        
+        .print-header-title {
+            text-align: center !important;
+            font-size: 20px !important;
+            margin-bottom: 15px !important;
+        }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -177,7 +195,6 @@ with st.sidebar:
         
         c_tr, c_dl = st.columns(2)
         with c_tr:
-            # Lógica corregida: Se deshabilita (bloquea seleccionado) si YA está trabajando
             if st.button("🟢 Activa", key=f"btn_tr_{m}", use_container_width=True, type="primary" if estado_actual == "Trabajando" else "secondary", disabled=(estado_actual == "Trabajando")):
                 st.session_state.estados_maquinas[m] = "Trabajando"
                 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
@@ -185,7 +202,6 @@ with st.sidebar:
                 st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
                 st.rerun()
         with c_dl:
-            # Lógica corregida: Se deshabilita si YA está parada de la línea
             if st.button("🔴 Parada", key=f"btn_dl_{m}", use_container_width=True, type="primary" if estado_actual == "Día Libre" else "secondary", disabled=(estado_actual == "Día Libre")):
                 st.session_state.estados_maquinas[m] = "Día Libre"
                 for op in LISTA_7_OPERARIOS:
@@ -199,7 +215,7 @@ with st.sidebar:
 # -------------------------------------------------------------------------
 # 4. TABLERO CENTRAL DE KPIs
 # -------------------------------------------------------------------------
-st.title("🏭 Planificador y Balanceo Dinámico de Celdas")
+st.markdown("<h2 class='print-header-title'>🏭 Plan de Cargas del Turno Activo</h2>", unsafe_allow_html=True)
 
 num_maquinas_trabajando = len(maquinas_activas)
 num_operarios_disponibles = len(ops_activos)
@@ -211,17 +227,13 @@ for op in ops_activos:
 saturacion_media_turno = (np.mean(cargas_reales_operarios) * 100) if cargas_reales_operarios else 0.0
 
 kpi1, kpi2, kpi3 = st.columns(3)
-with kpi1:
-    st.metric(label="📊 Nº de Máquinas Trabajando", value=f"{num_maquinas_trabajando} Celdas")
-with kpi2:
-    st.metric(label="👤 Nº de Operarios Activos", value=f"{num_operarios_disponibles} de 7")
-with kpi3:
-    st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
+with kpi1: st.metric(label="📊 Nº de Máquinas Trabajando", value=f"{num_maquinas_trabajando} Celdas")
+with kpi2: st.metric(label="👤 Nº de Operarios Activos", value=f"{num_operarios_disponibles} de 7")
+with kpi3: st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
 
 todas_las_maquinas_en_uso = []
 for op_k in ops_activos:
     todas_las_maquinas_en_uso.extend(st.session_state.propuesta_actual.get(op_k, []))
-    
 maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 
 if maquinas_faltantes:
@@ -232,7 +244,7 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. MATRIZ DE FICHAS CON EXCLUSIÓN CRUZADA SIN DESFASE VISUAL
+# 5. MATRIZ DE FICHAS OPTIMIZADA (VISTA WEB + REPORTE ULTRACOMPACTO IMPRESO)
 # -------------------------------------------------------------------------
 st.subheader("🚀 Asignación del Turno (Modificación Manual Protegida)")
 cols_res = st.columns(4)
@@ -242,13 +254,16 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
     maquinas_del_operario = st.session_state.propuesta_actual.get(operario, [])
     
     with cols_res[idx % 4]:
+        # Contenedor con clase CSS personalizada para controlar la impresión limpia
+        st.markdown(f"<div class='print-only-card'>", unsafe_allow_html=True)
+        
         if not esta_disponible:
             with st.container(border=True):
-                st.markdown(f"<h3 style='color: #888;'>👤 {operario}</h3>", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color: #888; margin:0;'>👤 {operario}</h3>", unsafe_allow_html=True)
                 st.caption("❌ **Día Libre / Ausente**")
         else:
             with st.container(border=True):
-                st.markdown(f"### 👤 {operario}")
+                st.markdown(f"<h3 style='margin:0;'>👤 {operario}</h3>", unsafe_allow_html=True)
                 
                 maquinas_ocupadas_por_otros = []
                 for op_ref, maqs_ref in st.session_state.propuesta_actual.items():
@@ -258,7 +273,7 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                # Clave hash dinámica única basada en el contenido exacto para forzar render correcto del multiselect
+                # Modificación Interactiva en Pantalla
                 nuevas_maquinas = st.multiselect(
                     "Asignar celdas:", 
                     options=opciones_visibles, 
@@ -270,27 +285,26 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                     st.session_state.propuesta_actual[operario] = nuevas_maquinas
                     st.rerun()
                 
-                st.markdown("**Detalle de Cargas:**")
+                # Muestra las celdas en cajas limpias (Esto es lo que se verá impecable en el PDF)
                 if nuevas_maquinas:
-                    for m in nuevas_maquinas:
-                        st.write(f"• **Máquina {m}**: {WORKLOAD_MAESTRO.get(m, 0)*100:.1f}% carga")
+                    maqs_formateadas = " ".join([f"<span style='background-color:#e1f5fe; border:1px solid #0288d1; padding:2px 6px; border-radius:3px; font-weight:bold; margin-right:4px;'>M-{m}</span>" for m in nuevas_maquinas])
+                    st.markdown(f"<div style='margin-top:8px; margin-bottom:8px;'>{maqs_formateadas}</div>", unsafe_allow_html=True)
                 else:
-                    st.caption("💤 Sin celdas asignadas.")
+                    st.markdown("<div style='color:#777; font-style:italic;'>Sin celdas</div>", unsafe_allow_html=True)
 
                 carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in nuevas_maquinas])
                 sat_p = carga_real * 100
                 
-                aplica_excepcion_pasillo = len(nuevas_maquinas) > 0 and all(m in HEURISTICA_PASILLO for m in nuevas_maquinas)
-                
                 if sat_p > 110.0:
-                    st.error(f"🔴 Sobrecarga Crítica: {sat_p:.1f}% (Máx 110%)")
+                    st.error(f"🔴 Carga: {sat_p:.1f}%")
                 elif sat_p > 97.0:
-                    st.warning(f"⚠️ Carga Elevada: {sat_p:.1f}%")
+                    st.warning(f"⚠️ Carga: {sat_p:.1f}%")
                 elif sat_p == 0:
                     pass
                 else:
-                    st.success(f"⚡ Carga Óptima: {sat_p:.1f}%")
+                    st.success(f"⚡ Carga: {sat_p:.1f}%")
 
+                # Verificación de Trayectos (Exclusivo en pantalla)
                 if len(nuevas_maquinas) > 1:
                     distancias_texto = []
                     alerta_distancia = False
@@ -298,28 +312,27 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                         for j in range(i + 1, len(nuevas_maquinas)):
                             m1, m2 = nuevas_maquinas[i], nuevas_maquinas[j]
                             dist = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
-                            distancias_texto.append(f"{m1} ↔️ {m2}: {dist} metros")
+                            distancias_texto.append(f"{m1} ↔️ {m2}: {dist}m")
                             if dist > DISTANCIA_CRITICA_MAX:
                                 alerta_distancia = True
                                 
-                    with st.expander("📍 Verificación de Trayectos", expanded=alerta_distancia):
+                    with st.expander("📍 Trayectos", expanded=False):
                         for txt in distancias_texto:
-                            if any(f" {x} metros" in txt for x in ["21","23","24","25","26","27","28","29","35","36","37","38","39","40","41","42","43","44","45","46","47","48","49","50","51","59","62","66","70","74","78","80"]):
-                                st.write(f"❌ {txt} — **Inviable**")
-                            else:
-                                st.write(f"✅ {txt}")
+                            st.write(txt)
 
+                # Criticidad (Exclusivo en pantalla)
                 if nuevas_maquinas:
-                    st.write("**Criticidad (Hitos):**")
                     for m in nuevas_maquinas:
                         c1, c2 = st.columns([1, 2])
-                        with c1: st.caption(f"🤖 **M-{m}**")
+                        with c1: st.caption(f"🤖 {m}")
                         with c2:
                             prio_estrella = st.selectbox(f"Prio_{operario}_{m}", options=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"], index=["⭐⭐⭐ Alta", "⭐⭐ Media", "⭐ Baja"].index(st.session_state.prioridades_estrellas.get(m, "⭐⭐ Media")), label_visibility="collapsed", key=f"star_sel_{operario}_{m}")
                             st.session_state.prioridades_estrellas[m] = prio_estrella
+        
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------------------
-# 6. PANEL DE ACCIONES FINALES (IA + IMPRESIÓN BLINDADA INTERNA)
+# 6. PANEL DE ACCIONES FINALES CON PUENTE DE IMPRESIÓN DIRECTO EN 1 PÁGINA
 # -------------------------------------------------------------------------
 st.write("---")
 c_recalc, c_print = st.columns(2)
@@ -330,8 +343,7 @@ with c_recalc:
         st.rerun()
 
 with c_print:
-    st.markdown("**🖨️ Acciones de Reporte**")
-    # Componente nativo aislado para forzar la orden de impresión del sistema de forma segura
+    st.markdown("**🖨️ Salida de Reporte Compacto (1 Hoja)**")
     components.html("""
         <button onclick="window.parent.print()" style="
             width: 100%; 
@@ -345,6 +357,6 @@ with c_print:
             font-weight: bold;
             font-family: sans-serif;
             box-shadow: 0px 2px 4px rgba(0,0,0,0.1);">
-            Generar Reporte PDF / Imprimir Turno Activo
+            Generar Fichas Limpias / Imprimir a 1 Hoja (PDF)
         </button>
     """, height=50)
