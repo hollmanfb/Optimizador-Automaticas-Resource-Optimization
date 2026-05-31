@@ -6,8 +6,8 @@ import numpy as np
 # 1. BASE DE DATOS MAESTRA Y PARÁMETROS ERGONÓMICOS (MEDMIX)
 # -------------------------------------------------------------------------
 MAX_SATURACION_ESTANDAR = 1.10  
-VELOCIDAD_CAMINADO = 1.2  # metros por segundo (m/s)
-FRECUENCIA_TRASLADOS_HORA = 4  # estimación de intervenciones/alarmas promedio por hora por máquina
+VELOCIDAD_CAMINADO = 1.2  
+FRECUENCIA_TRASLADOS_HORA = 4  
 
 WORKLOAD_MAESTRO_BASE = {
     "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
@@ -107,7 +107,6 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
                 asignacion["Operario 3"].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # Ordenar elementos remanentes de mayor a menor carga estática
     maquinas_por_asignar.sort(key=lambda x: -cargas_activas.get(x, 0))
 
     # Reparto Dinámico Seguro por Proximidad Física Real
@@ -134,7 +133,6 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Cobertura de contingencia final (Garantía de Cero Máquinas Huérfanas)
     for m in list(maquinas_por_asignar):
         ops_validos = [o for o in operarios_disponibles if not (m == "904" and "928" in asignacion[o]) and not (m == "928" and "904" in asignacion[o])]
         if not ops_validos: 
@@ -146,7 +144,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
     return asignacion
 
 # -------------------------------------------------------------------------
-# 4. CONFIGURACIÓN DE LA INTERFAZ DE USUARIO (DISEÑO DIDÁCTICO LATERAL ORIGINAL)
+# 4. CONFIGURACIÓN DE LA INTERFAZ DE USUARIO (RESTABLECIDA AL 100%)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
 
@@ -156,7 +154,6 @@ if "version_902" not in st.session_state:
 cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
 cargas_dinamicas_turno["902"] = 0.4500 if st.session_state.version_902 == "Cánula Larga (45.0%)" else 0.3712
 
-# Inicializar estados de máquinas paradas/activas
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in cargas_dinamicas_turno.keys()}
     for desactiva in ["904", "916", "925", "926"]:
@@ -165,7 +162,7 @@ if "estados_maquinas" not in st.session_state:
 if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_8_OPERARIOS}
 
-# --- RESTAURACIÓN: COLUMNA LATERAL DIDÁCTICA COMPLETA ---
+# --- CONTROL LATERAL ORIGINAL (SELECCIÓN DIRECTA DE BOTONES CON LUZ ALTA) ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     st.markdown("### 🏃 Ergonomía: **1.2 m/s**")
@@ -180,18 +177,19 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### ⚙️ Estado de Celdas (Activas)")
     maquinas_ordenadas = sorted(list(cargas_dinamicas_turno.keys()))
+    
     for m in maquinas_ordenadas:
-        est_previo = st.session_state.estados_maquinas.get(m, "Trabajando")
-        
-        # Formato de botones estilizados (Activa / Parada)
+        est_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
         st.markdown(f"**Celda {m}** — Carga: {cargas_dinamicas_turno[m]*100:.1f}%")
         col_act, col_par = st.columns(2)
+        
+        # Lógica de resaltado Poka-Yoke corregida sin causar recargas infinitas
         with col_act:
-            if st.button(f"🟢 Activa", key=f"act_{m}", help=f"Encender M-{m}", use_container_width=True, type="secondary" if est_previo == "Trabajando" else "primary"):
+            if st.button(f"🟢 Activa", key=f"btn_act_{m}", use_container_width=True, type="primary" if est_actual == "Trabajando" else "secondary"):
                 st.session_state.estados_maquinas[m] = "Trabajando"
                 st.rerun()
         with col_par:
-            if st.button(f"🔴 Parada", key=f"par_{m}", help=f"Apagar M-{m}", use_container_width=True, type="primary" if est_previo == "Día Libre" else "secondary"):
+            if st.button(f"🔴 Parada", key=f"btn_par_{m}", use_container_width=True, type="primary" if est_actual == "Día Libre" else "secondary"):
                 st.session_state.estados_maquinas[m] = "Día Libre"
                 st.rerun()
 
@@ -204,15 +202,33 @@ with st.sidebar:
             st.session_state.estados_operarios[op] = sel_op
             st.rerun()
 
-# Filtrado de elementos basado en las selecciones de la barra lateral
+# Lectura directa de estados de controles laterales
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
 st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
 
 # -------------------------------------------------------------------------
-# 5. PANEL DE MANDO CENTRAL (CUADRÍCULA DE OPERARIOS)
+# 5. RESUMEN SUPERIOR RECUPERADO (KPI INDICADORES)
 # -------------------------------------------------------------------------
+# Calcular métricas globales reales
+total_celdas_num = len(maquinas_activas)
+total_ops_num = len(ops_activos)
+suma_cargas = sum([cargas_dinamicas_turno[m] for m in maquinas_activas])
+carga_media_global = (suma_cargas / total_ops_num * 100) if total_ops_num > 0 else 0.0
+
+col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+with col_kpi1:
+    st.metric(label="🔢 Celdas en Producción", value=f"{total_celdas_num} / 16")
+with col_kpi2:
+    st.metric(label="👥 Operarios Activos", value=f"{total_ops_num} de 8")
+with col_kpi3:
+    st.metric(label="📊 Carga Media de Saturación", value=f"{carga_media_global:.1f}%")
+
+# -------------------------------------------------------------------------
+# 6. CUADRÍCULA CENTRAL DE DISTRIBUCIÓN
+# -------------------------------------------------------------------------
+st.markdown("---")
 st.markdown("## 📊 Plan de Cargas con Cálculo de Desplazamiento ($1.2 \\text{ m/s}$)")
 
 todas_las_maquinas_en_uso = []
@@ -223,7 +239,7 @@ maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 if maquinas_faltantes:
     st.error(f"⚠️ ATENCIÓN: Hay celdas trabajando sin operario asignado: {', '.join(sorted(maquinas_faltantes))}")
 else:
-    st.success("✅ Estabilidad de Línea: 100% de las celdas cubiertas respetando límites de fatiga y proximidad.")
+    st.success("✅ Estabilidad de Línea: Todas las celdas cubiertas correctamente.")
 
 cols_res = st.columns(4)
 for idx, operario in enumerate(LISTA_8_OPERARIOS):
@@ -253,9 +269,6 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_maquinas]) if nuevas_maquinas else 0.0
                 carga_desplazamiento = calcular_carga_caminado(nuevas_maquinas) if nuevas_maquinas else 0.0
                 
-                if carga_estatica is None: carga_estatica = 0.0
-                if carga_desplazamiento is None: carga_desplazamiento = 0.0
-                
                 carga_total_real = (carga_estatica + carga_desplazamiento) * 100.0
 
                 st.markdown(f"**Carga de Máquinas:** {carga_estatica*100:.1f}%")
@@ -276,7 +289,7 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                     st.error("🚨 CRÍTICO: Prohibido juntar M-927 + M-902 en Cánula Larga.")
 
 # -------------------------------------------------------------------------
-# 6. SOLUCIÓN AL BOTÓN DE IMPRESIÓN (NATIVO E INFALIBLE)
+# 7. BOTONERA INFERIOR (CÁLCULO E IMPRESIÓN INSTANTÁNEA)
 # -------------------------------------------------------------------------
 st.write("---")
 col_btn1, col_btn2 = st.columns(2)
@@ -287,7 +300,6 @@ with col_btn1:
         st.rerun()
 
 with col_btn2:
-    # Este componente iframe inyecta el botón directamente forzando la cola de impresión del sistema de forma robusta
     components.html("""
         <button style="
             background-color: #24a0ed;
