@@ -8,7 +8,8 @@ import numpy as np
 MAX_SATURACION_ESTANDAR = 1.10  
 DISTANCIA_CRITICA_MAX = 20.0  
 
-WORKLOAD_MAESTRO = {
+# Base de datos con las cargas base por máquina
+WORKLOAD_MAESTRO_BASE = {
     "902": 0.3712, "903": 0.3437, "904": 0.3016, "905": 0.3218,
     "906": 0.3289, "907": 0.3217, "911": 0.1821, "916": 0.3868,
     "917": 1.0000, "922": 0.5321, "923": 0.6995, "924": 1.0000,
@@ -35,26 +36,27 @@ MATRIZ_DISTANCIAS = {
 }
 
 HEURISTICA_PASILLO = {"922", "911", "926", "925", "905"}
-LISTA_7_OPERARIOS = [f"Operario {i}" for i in range(1, 8)]
+# Actualizado ahora a la nueva capacidad: 8 Operarios
+LISTA_8_OPERARIOS = [f"Operario {i}" for i in range(1, 9)]
 
 # -------------------------------------------------------------------------
-# 2. ALGORITMO OPTIMIZADOR AJUSTADO SEGÚN EXCEL MAESTRO DE REFERENCIA
+# 2. ALGORITMO OPTIMIZADOR AJUSTADO (IA CON ENFOQUE EN 8 OPERARIOS Y VARIANTES)
 # -------------------------------------------------------------------------
-def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
-    asignacion = {op: [] for op in LISTA_7_OPERARIOS}
+def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, cargas_activas):
+    asignacion = {op: [] for op in LISTA_8_OPERARIOS}
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
     if not operarios_disponibles:
         return asignacion
 
-    # Regla 1: Asignaciones fijas estructurales de Hitos e Hilera Clave
+    # Regla 1: Asignaciones fijas de Hitos estructurales
     mapeo_estricto = {"917": "Operario 4", "924": "Operario 6", "928": "Operario 7"}
     for m, op in mapeo_estricto.items():
         if m in maquinas_por_asignar and op in operarios_disponibles:
             asignacion[op].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Regla 2: Pareja Optimizada Operario 1 (927 y 902)
+    # Regla 2: Pareja Crítica Operario 1 (927 y 902) - Se evalúa con la carga de variante activa
     if "Operario 1" in operarios_disponibles:
         for m in ["927", "902"]:
             if m in maquinas_por_asignar:
@@ -75,8 +77,8 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
                 asignacion["Operario 3"].append(m)
                 maquinas_por_asignar.remove(m)
 
-    # Distribución de desborde dinámico por cercanía física para cualquier otra máquina restante
-    maquinas_por_asignar.sort(key=lambda x: -WORKLOAD_MAESTRO.get(x, 0))
+    # Distribución inteligente para el Operario 8 y desbordes dinámicos por cercanía física
+    maquinas_por_asignar.sort(key=lambda x: -cargas_activas.get(x, 0))
     ops_restantes = [o for o in operarios_disponibles if o not in ["Operario 4", "Operario 6"]]
     if not ops_restantes:
         ops_restantes = list(operarios_disponibles)
@@ -87,9 +89,9 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
         
         for op in ops_restantes:
             maqs_del_op = asignacion[op]
-            carga_actual = sum([WORKLOAD_MAESTRO[x] for x in maqs_del_op])
+            carga_actual = sum([cargas_activas[x] for x in maqs_del_op])
             
-            if carga_actual + WORKLOAD_MAESTRO[m] <= 1.20:
+            if carga_actual + cargas_activas[m] <= 1.15:
                 if maqs_del_op:
                     dist_eval = np.mean([MATRIZ_DISTANCIAS[m].get(ya, 50.0) for ya in maqs_del_op])
                 else:
@@ -103,8 +105,9 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
             asignacion[mejor_op].append(m)
             maquinas_por_asignar.remove(m)
 
+    # Asignador de seguridad contra máquinas huérfanas
     for m in list(maquinas_por_asignar):
-        op_menos_cargado = min(operarios_disponibles, key=lambda o: sum([WORKLOAD_MAESTRO[x] for x in asignacion[o]]))
+        op_menos_cargado = min(operarios_disponibles, key=lambda o: sum([cargas_activas[x] for x in asignacion[o]]))
         asignacion[op_menos_cargado].append(m)
 
     return asignacion
@@ -114,108 +117,113 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles):
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Turnos medmix")
 
-# 🖨️ CSS DE ALTA PRECISIÓN PARA FORZAR IMPRESIÓN EN 1 HOJA LIMPIA
+# Inicializar versión de la máquina 902 en sesión
+if "version_902" not in st.session_state:
+    st.session_state.version_902 = "Cánula Corta (37.1%)"
+
+# Diccionario dinámico de cargas calculadas en tiempo real para el turno
+cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
+if st.session_state.version_902 == "Cánula Larga (45.0%)":
+    cargas_dinamicas_turno["902"] = 0.4500
+else:
+    cargas_dinamicas_turno["902"] = 0.3712
+
+# CSS adaptado para forzar impresión limpia en 1 hoja manteniendo soporte para 8 bloques
 st.markdown("""
     <style>
     @media print {
-        /* Ocultar elementos interactivos pesados globales */
         header, [data-testid="stSidebar"], .stButton, button, footer, hr, 
         [data-testid="stMetricWidget"], .stAlert, [data-baseinput="true"], .stMultiSelect {
             display: none !important;
         }
-        
-        /* Ajustar contenedor principal de la hoja */
         [data-testid="stMainBlockContainer"] {
-            padding: 0px !important;
-            margin: 0px !important;
-            max-width: 100% !important;
+            padding: 0px !important; margin: 0px !important; max-width: 100% !important;
         }
-        
-        /* Ocultar los selectores interactivos de criticidad */
         div[data-testid="stBlock"] div[data-testid="stBlock"] {
             display: none !important;
         }
-        
-        /* Forzar saltos de línea e inyección compacta */
         .print-only-card {
-            border: 1px solid #000 !important;
-            padding: 8px !important;
-            margin-bottom: 5px !important;
-            border-radius: 4px !important;
-            background-color: #fff !important;
-            page-break-inside: avoid !important;
+            border: 1px solid #000 !important; padding: 6px !important;
+            margin-bottom: 4px !important; border-radius: 4px !important;
+            background-color: #fff !important; page-break-inside: avoid !important;
         }
-        
         .print-header-title {
-            text-align: center !important;
-            font-size: 20px !important;
-            margin-bottom: 15px !important;
+            text-align: center !important; font-size: 18px !important; margin-bottom: 10px !important;
         }
     }
     </style>
 """, unsafe_allow_html=True)
 
 if "estados_maquinas" not in st.session_state:
-    st.session_state.estados_maquinas = {m: "Trabajando" for m in WORKLOAD_MAESTRO.keys()}
+    st.session_state.estados_maquinas = {m: "Trabajando" for m in cargas_dinamicas_turno.keys()}
     for desactiva in ["904", "916", "925", "926"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
 if "estados_operarios" not in st.session_state:
-    st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_7_OPERARIOS}
+    st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_8_OPERARIOS}
 
 if "prioridades_estrellas" not in st.session_state:
-    st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in WORKLOAD_MAESTRO.keys()}
+    st.session_state.prioridades_estrellas = {m: "⭐⭐ Media" for m in cargas_dinamicas_turno.keys()}
 
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
 if "propuesta_actual" not in st.session_state:
-    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
 
 # --- PANEL DE CONTROL LATERAL ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
     
-    st.markdown("### 👤 Disponibilidad de Personal")
-    for op in LISTA_7_OPERARIOS:
+    st.markdown("### 👤 Disponibilidad (8 Operarios)")
+    for op in LISTA_8_OPERARIOS:
         estado_previo = st.session_state.estados_operarios.get(op, "Disponible")
         sel_op = st.selectbox(f"{op}:", options=["Disponible", "Día Libre / Ausente"], index=0 if estado_previo == "Disponible" else 1, key=f"sel_status_{op}")
         if sel_op != estado_previo:
             st.session_state.estados_operarios[op] = sel_op
             maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
             ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-            st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+            st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### ⚙️ Estado de Celdas (Activas)")
-    for m in sorted(WORKLOAD_MAESTRO.keys()):
+    st.markdown("### ⚙️ Estado de Celdas y Variantes")
+    for m in sorted(cargas_dinamicas_turno.keys()):
         estado_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
-        st.markdown(f"**Celda {m}** — Carga: {WORKLOAD_MAESTRO[m]*100:.1f}%")
+        
+        # Discriminación Especial por Versión de Producto en la 902
+        if m == "902":
+            st.markdown(f"**Celda 902** — Variable Técnica")
+            version_sel = st.selectbox("Versión de Producto:", options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1, key="sel_v902")
+            if version_sel != st.session_state.version_902:
+                st.session_state.version_902 = version_sel
+                cargas_dinamicas_turno["902"] = 0.4500 if version_sel == "Cánula Larga (45.0%)" else 0.3712
+                st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
+                st.rerun()
+        else:
+            st.markdown(f"**Celda {m}** — Carga: {cargas_dinamicas_turno[m]*100:.1f}%")
         
         c_tr, c_dl = st.columns(2)
         with c_tr:
             if st.button("🟢 Activa", key=f"btn_tr_{m}", use_container_width=True, type="primary" if estado_actual == "Trabajando" else "secondary", disabled=(estado_actual == "Trabajando")):
                 st.session_state.estados_maquinas[m] = "Trabajando"
                 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-                ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-                st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+                st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
                 st.rerun()
         with c_dl:
             if st.button("🔴 Parada", key=f"btn_dl_{m}", use_container_width=True, type="primary" if estado_actual == "Día Libre" else "secondary", disabled=(estado_actual == "Día Libre")):
                 st.session_state.estados_maquinas[m] = "Día Libre"
-                for op in LISTA_7_OPERARIOS:
+                for op in LISTA_8_OPERARIOS:
                     if m in st.session_state.propuesta_actual.get(op, []):
                         st.session_state.propuesta_actual[op].remove(m)
                 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-                ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-                st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+                st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
                 st.rerun()
 
 # -------------------------------------------------------------------------
 # 4. TABLERO CENTRAL DE KPIs
 # -------------------------------------------------------------------------
-st.markdown("<h2 class='print-header-title'>🏭 Plan de Cargas del Turno Activo</h2>", unsafe_allow_html=True)
+st.markdown("<h2 class='print-header-title'>🏭 Plan de Cargas Automáticas (Capacidad: 8 Operarios)</h2>", unsafe_allow_html=True)
 
 num_maquinas_trabajando = len(maquinas_activas)
 num_operarios_disponibles = len(ops_activos)
@@ -223,12 +231,12 @@ num_operarios_disponibles = len(ops_activos)
 cargas_reales_operarios = []
 for op in ops_activos:
     maqs_del_op = st.session_state.propuesta_actual.get(op, [])
-    cargas_reales_operarios.append(sum([WORKLOAD_MAESTRO.get(x, 0) for x in maqs_del_op]))
+    cargas_reales_operarios.append(sum([cargas_dinamicas_turno.get(x, 0) for x in maqs_del_op]))
 saturacion_media_turno = (np.mean(cargas_reales_operarios) * 100) if cargas_reales_operarios else 0.0
 
 kpi1, kpi2, kpi3 = st.columns(3)
 with kpi1: st.metric(label="📊 Nº de Máquinas Trabajando", value=f"{num_maquinas_trabajando} Celdas")
-with kpi2: st.metric(label="👤 Nº de Operarios Activos", value=f"{num_operarios_disponibles} de 7")
+with kpi2: st.metric(label="👤 Nº de Operarios Activos", value=f"{num_operarios_disponibles} de 8")
 with kpi3: st.metric(label="⚡ Saturación Media del Turno", value=f"{saturacion_media_turno:.1f}%")
 
 todas_las_maquinas_en_uso = []
@@ -244,17 +252,16 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------------------
-# 5. MATRIZ DE FICHAS OPTIMIZADA (VISTA WEB + REPORTE ULTRACOMPACTO IMPRESO)
+# 5. MATRIZ DE FICHAS DE 8 OPERARIOS COMPACTAS PARA REPORTE IMPRESO
 # -------------------------------------------------------------------------
-st.subheader("🚀 Asignación del Turno (Modificación Manual Protegida)")
+st.subheader("🚀 Asignación de Puestos y Cargas Activas")
 cols_res = st.columns(4)
 
-for idx, operario in enumerate(LISTA_7_OPERARIOS):
+for idx, operario in enumerate(LISTA_8_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
     maquinas_del_operario = st.session_state.propuesta_actual.get(operario, [])
     
     with cols_res[idx % 4]:
-        # Contenedor con clase CSS personalizada para controlar la impresión limpia
         st.markdown(f"<div class='print-only-card'>", unsafe_allow_html=True)
         
         if not esta_disponible:
@@ -273,7 +280,6 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                # Modificación Interactiva en Pantalla
                 nuevas_maquinas = st.multiselect(
                     "Asignar celdas:", 
                     options=opciones_visibles, 
@@ -285,14 +291,19 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                     st.session_state.propuesta_actual[operario] = nuevas_maquinas
                     st.rerun()
                 
-                # Muestra las celdas en cajas limpias (Esto es lo que se verá impecable en el PDF)
                 if nuevas_maquinas:
-                    maqs_formateadas = " ".join([f"<span style='background-color:#e1f5fe; border:1px solid #0288d1; padding:2px 6px; border-radius:3px; font-weight:bold; margin-right:4px;'>M-{m}</span>" for m in nuevas_maquinas])
-                    st.markdown(f"<div style='margin-top:8px; margin-bottom:8px;'>{maqs_formateadas}</div>", unsafe_allow_html=True)
+                    labels = []
+                    for m in nuevas_maquinas:
+                        # Resaltado visual en el reporte si la 902 corre variante compleja
+                        if m == "902" and st.session_state.version_902 == "Cánula Larga (45.0%)":
+                            labels.append(f"<span style='background-color:#ffebee; border:1px solid #c62828; padding:2px 6px; border-radius:3px; font-weight:bold; margin-right:4px; color:#c62828;'>M-902 (Larga)</span>")
+                        else:
+                            labels.append(f"<span style='background-color:#e1f5fe; border:1px solid #0288d1; padding:2px 6px; border-radius:3px; font-weight:bold; margin-right:4px;'>M-{m}</span>")
+                    st.markdown(f"<div style='margin-top:8px; margin-bottom:8px;'>{' '.join(labels)}</div>", unsafe_allow_html=True)
                 else:
                     st.markdown("<div style='color:#777; font-style:italic;'>Sin celdas</div>", unsafe_allow_html=True)
 
-                carga_real = sum([WORKLOAD_MAESTRO.get(m, 0) for m in nuevas_maquinas])
+                carga_real = sum([cargas_dinamicas_turno.get(m, 0) for m in nuevas_maquinas])
                 sat_p = carga_real * 100
                 
                 if sat_p > 110.0:
@@ -304,23 +315,17 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga: {sat_p:.1f}%")
 
-                # Verificación de Trayectos (Exclusivo en pantalla)
                 if len(nuevas_maquinas) > 1:
                     distancias_texto = []
-                    alerta_distancia = False
                     for i in range(len(nuevas_maquinas)):
                         for j in range(i + 1, len(nuevas_maquinas)):
                             m1, m2 = nuevas_maquinas[i], nuevas_maquinas[j]
                             dist = MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 0)
                             distancias_texto.append(f"{m1} ↔️ {m2}: {dist}m")
-                            if dist > DISTANCIA_CRITICA_MAX:
-                                alerta_distancia = True
                                 
                     with st.expander("📍 Trayectos", expanded=False):
-                        for txt in distancias_texto:
-                            st.write(txt)
+                        for txt in distancias_texto: st.write(txt)
 
-                # Criticidad (Exclusivo en pantalla)
                 if nuevas_maquinas:
                     for m in nuevas_maquinas:
                         c1, c2 = st.columns([1, 2])
@@ -332,14 +337,14 @@ for idx, operario in enumerate(LISTA_7_OPERARIOS):
         st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------------------
-# 6. PANEL DE ACCIONES FINALES CON PUENTE DE IMPRESIÓN DIRECTO EN 1 PÁGINA
+# 6. ACCIONES FINALES Y GENERADOR DE DOCUMENTO DEFINITIVO
 # -------------------------------------------------------------------------
 st.write("---")
 c_recalc, c_print = st.columns(2)
 
 with c_recalc:
     if st.button("🔄 Recalcular por Proximidad Física Real (IA)", type="primary", use_container_width=True):
-        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos)
+        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno)
         st.rerun()
 
 with c_print:
