@@ -51,7 +51,6 @@ def calcular_carga_caminado(lista_maquinas):
             distancias.append(MATRIZ_DISTANCIAS.get(m1, {}).get(m2, 25.0))
             
     distancia_media = np.mean(distancias)
-    # Ecuación cinemática: Segundos perdidos en traslados por hora
     segundos_traslado_hora = (distancia_media / VELOCIDAD_CAMINADO) * FRECUENCIA_TRASLADOS_HORA
     porcentaje_jornada_consumido = segundos_traslado_hora / 3600.0
     return porcentaje_jornada_consumido
@@ -129,7 +128,6 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
             carga_dinamica_pasos = calcular_carga_caminado(maqs_del_op)
             carga_total_proyectada = carga_estatica + carga_dinamica_pasos
             
-            # Tolerancia técnica sobre el límite estándar por desborde controlado
             if carga_total_proyectada <= MAX_SATURACION_ESTANDAR + 0.05:
                 if carga_total_proyectada < menor_carga_total:
                     menor_carga_total = carga_total_proyectada
@@ -161,20 +159,14 @@ if "version_902" not in st.session_state:
 cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
 cargas_dinamicas_turno["902"] = 0.4500 if st.session_state.version_902 == "Cánula Larga (45.0%)" else 0.3712
 
+# Inicializar estados de máquinas de forma persistente
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in cargas_dinamicas_turno.keys()}
-    # Ajuste de configuración base en planta (fichas desactivadas por defecto)
     for desactiva in ["904", "916", "925", "926"]:
         st.session_state.estados_maquinas[desactiva] = "Día Libre"
 
 if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_8_OPERARIOS}
-
-maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-
-if "propuesta_actual" not in st.session_state:
-    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
 
 # --- PANEL LATERAL DE PLANTA (SIDEBAR CONTROL) ---
 with st.sidebar:
@@ -187,8 +179,6 @@ with st.sidebar:
         sel_op = st.selectbox(f"{op}:", options=["Disponible", "Día Libre"], index=0 if estado_previo == "Disponible" else 1, key=f"s_{op}")
         if sel_op != estado_previo:
             st.session_state.estados_operarios[op] = sel_op
-            ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
-            st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
             st.rerun()
 
     st.markdown("---")
@@ -196,13 +186,44 @@ with st.sidebar:
     version_sel = st.selectbox("M-902 - Tipo de Cánula:", options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1)
     if version_sel != st.session_state.version_902:
         st.session_state.version_902 = version_sel
-        cargas_dinamicas_turno["902"] = 0.4500 if version_sel == "Cánula Larga (45.0%)" else 0.3712
-        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
         st.rerun()
 
 # -------------------------------------------------------------------------
-# 5. GENERACIÓN DEL PANEL DE MANDO CENTRAL
+# 5. MÓDULO RECUPERADO: LISTADO E INTERRUPTORES DE MÁQUINAS (ACTIVA/PARADA)
 # -------------------------------------------------------------------------
+st.markdown("## ⚙️ Estado Operativo de Máquinas en Planta")
+st.markdown("Indica qué máquinas están encendidas hoy. Las celdas en 'Día Libre / Parada' se excluirán del cálculo.")
+
+cols_maqs = st.columns(4)
+maquinas_ordenadas = sorted(list(cargas_dinamicas_turno.keys()))
+
+for i, m in enumerate(maquinas_ordenadas):
+    with cols_maqs[i % 4]:
+        est_previo = st.session_state.estados_maquinas.get(m, "Trabajando")
+        idx_est = 0 if est_previo == "Trabajando" else 1
+        
+        nuevo_est = st.radio(
+            f"Celda **M-{m}** (Carga: {cargas_dinamicas_turno[m]*100:.1f}%)",
+            options=["Trabajando", "Día Libre"],
+            index=idx_est,
+            key=f"radio_m_{m}",
+            horizontal=True
+        )
+        if nuevo_est != est_previo:
+            st.session_state.estados_maquinas[m] = nuevo_est
+            st.rerun()
+
+# Recalcular listas activas tras leer los interruptores
+maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
+ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
+
+# Ejecución del algoritmo optimizador
+st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
+
+# -------------------------------------------------------------------------
+# 6. PANEL DE MANDO CENTRAL DE CARGAS REALES
+# -------------------------------------------------------------------------
+st.markdown("---")
 st.markdown("## 📊 Plan de Cargas con Cálculo de Desplazamiento ($1.2 \\text{ m/s}$)")
 
 todas_las_maquinas_en_uso = []
@@ -267,7 +288,35 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 if operario == "Operario 1" and "902" in nuevas_maquinas and "927" in nuevas_maquinas and st.session_state.version_902 == "Cánula Larga (45.0%)":
                     st.error("🚨 CRÍTICO: Prohibido juntar M-927 + M-902 en Cánula Larga.")
 
+# -------------------------------------------------------------------------
+# 7. BOTONERA DE ACCIÓN E IMPRESIÓN DE REPORTE
+# -------------------------------------------------------------------------
 st.write("---")
-if st.button("🔄 Recalcular Optimización por Proximidad Real (IA)", type="primary", use_container_width=True):
-    st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
-    st.rerun()
+col_btn1, col_btn2 = st.columns(2)
+
+with col_btn1:
+    if st.button("🔄 Recalcular Optimización por Proximidad Real (IA)", type="primary", use_container_width=True):
+        st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
+        st.rerun()
+
+with col_btn2:
+    st.markdown("""
+        <style>
+        .print-button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 24px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            width: 100%;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        </style>
+        <button class="print-button" onclick="window.print()">🖨️ Imprimir / Exportar Reporte de Turno</button>
+    """, unsafe_allow_html=True)
