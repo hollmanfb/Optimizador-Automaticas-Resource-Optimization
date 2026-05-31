@@ -116,11 +116,8 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
         menor_carga_total = float('inf')
         
         for op in operarios_disponibles:
-            # RESTRICCIÓN DE TRAYECTORIA EXTREMA: Prohibido juntar 928 y 904 en la misma persona
             if m == "904" and "928" in asignacion[op]: continue
             if m == "928" and "904" in asignacion[op]: continue
-            
-            # RESTRICCIÓN DE PROCESO CÁNULA LARGA: Vetado absoluto al Operario 1 para resguardar la M-927
             if m == "902" and variante_902 == "Cánula Larga (45.0%)" and op == "Operario 1": continue
 
             maqs_del_op = asignacion[op] + [m]
@@ -149,7 +146,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
     return asignacion
 
 # -------------------------------------------------------------------------
-# 4. CONFIGURACIÓN DE LA INTERFAZ DE USUARIO (STREAMLIT)
+# 4. CONFIGURACIÓN DE LA INTERFAZ DE USUARIO (DISEÑO DIDÁCTICO LATERAL ORIGINAL)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
 
@@ -159,7 +156,7 @@ if "version_902" not in st.session_state:
 cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
 cargas_dinamicas_turno["902"] = 0.4500 if st.session_state.version_902 == "Cánula Larga (45.0%)" else 0.3712
 
-# Inicializar estados de máquinas de forma persistente
+# Inicializar estados de máquinas paradas/activas
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in cargas_dinamicas_turno.keys()}
     for desactiva in ["904", "916", "925", "926"]:
@@ -168,11 +165,37 @@ if "estados_maquinas" not in st.session_state:
 if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_8_OPERARIOS}
 
-# --- PANEL LATERAL DE PLANTA (SIDEBAR CONTROL) ---
+# --- RESTAURACIÓN: COLUMNA LATERAL DIDÁCTICA COMPLETA ---
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
-    st.markdown("### 🏃 Parámetro Ergonomía: **1.2 m/s**")
+    st.markdown("### 🏃 Ergonomía: **1.2 m/s**")
     
+    st.markdown("---")
+    st.markdown("### ⚙️ Mezcla de Productos")
+    version_sel = st.selectbox("M-902 - Tipo de Cánula:", options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1)
+    if version_sel != st.session_state.version_902:
+        st.session_state.version_902 = version_sel
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("### ⚙️ Estado de Celdas (Activas)")
+    maquinas_ordenadas = sorted(list(cargas_dinamicas_turno.keys()))
+    for m in maquinas_ordenadas:
+        est_previo = st.session_state.estados_maquinas.get(m, "Trabajando")
+        
+        # Formato de botones estilizados (Activa / Parada)
+        st.markdown(f"**Celda {m}** — Carga: {cargas_dinamicas_turno[m]*100:.1f}%")
+        col_act, col_par = st.columns(2)
+        with col_act:
+            if st.button(f"🟢 Activa", key=f"act_{m}", help=f"Encender M-{m}", use_container_width=True, type="secondary" if est_previo == "Trabajando" else "primary"):
+                st.session_state.estados_maquinas[m] = "Trabajando"
+                st.rerun()
+        with col_par:
+            if st.button(f"🔴 Parada", key=f"par_{m}", help=f"Apagar M-{m}", use_container_width=True, type="primary" if est_previo == "Día Libre" else "secondary"):
+                st.session_state.estados_maquinas[m] = "Día Libre"
+                st.rerun()
+
+    st.markdown("---")
     st.markdown("### 👤 Control de Asistencia")
     for op in LISTA_8_OPERARIOS:
         estado_previo = st.session_state.estados_operarios.get(op, "Disponible")
@@ -181,49 +204,15 @@ with st.sidebar:
             st.session_state.estados_operarios[op] = sel_op
             st.rerun()
 
-    st.markdown("---")
-    st.markdown("### ⚙️ Mezcla de Productos")
-    version_sel = st.selectbox("M-902 - Tipo de Cánula:", options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1)
-    if version_sel != st.session_state.version_902:
-        st.session_state.version_902 = version_sel
-        st.rerun()
-
-# -------------------------------------------------------------------------
-# 5. MÓDULO RECUPERADO: LISTADO E INTERRUPTORES DE MÁQUINAS (ACTIVA/PARADA)
-# -------------------------------------------------------------------------
-st.markdown("## ⚙️ Estado Operativo de Máquinas en Planta")
-st.markdown("Indica qué máquinas están encendidas hoy. Las celdas en 'Día Libre / Parada' se excluirán del cálculo.")
-
-cols_maqs = st.columns(4)
-maquinas_ordenadas = sorted(list(cargas_dinamicas_turno.keys()))
-
-for i, m in enumerate(maquinas_ordenadas):
-    with cols_maqs[i % 4]:
-        est_previo = st.session_state.estados_maquinas.get(m, "Trabajando")
-        idx_est = 0 if est_previo == "Trabajando" else 1
-        
-        nuevo_est = st.radio(
-            f"Celda **M-{m}** (Carga: {cargas_dinamicas_turno[m]*100:.1f}%)",
-            options=["Trabajando", "Día Libre"],
-            index=idx_est,
-            key=f"radio_m_{m}",
-            horizontal=True
-        )
-        if nuevo_est != est_previo:
-            st.session_state.estados_maquinas[m] = nuevo_est
-            st.rerun()
-
-# Recalcular listas activas tras leer los interruptores
+# Filtrado de elementos basado en las selecciones de la barra lateral
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
-# Ejecución del algoritmo optimizador
 st.session_state.propuesta_actual = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
 
 # -------------------------------------------------------------------------
-# 6. PANEL DE MANDO CENTRAL DE CARGAS REALES
+# 5. PANEL DE MANDO CENTRAL (CUADRÍCULA DE OPERARIOS)
 # -------------------------------------------------------------------------
-st.markdown("---")
 st.markdown("## 📊 Plan de Cargas con Cálculo de Desplazamiento ($1.2 \\text{ m/s}$)")
 
 todas_las_maquinas_en_uso = []
@@ -232,7 +221,7 @@ for op_k in ops_activos:
 maquinas_faltantes = set(maquinas_activas) - set(todas_las_maquinas_en_uso)
 
 if maquinas_faltantes:
-    st.error(f"⚠️ Alerta Crítica: Celdas desatendidas en planta: {', '.join(sorted(maquinas_faltantes))}")
+    st.error(f"⚠️ ATENCIÓN: Hay celdas trabajando sin operario asignado: {', '.join(sorted(maquinas_faltantes))}")
 else:
     st.success("✅ Estabilidad de Línea: 100% de las celdas cubiertas respetando límites de fatiga y proximidad.")
 
@@ -255,13 +244,12 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 opciones_libres = sorted(list(set(maquinas_activas) - set(maquinas_ocupadas_por_otros)))
                 opciones_visibles = sorted(list(set(opciones_libres) | set(maquinas_del_operario)))
 
-                nuevas_maquinas = st.multiselect(f"Celdas bajo control:", options=opciones_visibles, default=maquinas_del_operario, key=f"ms_{operario}")
+                nuevas_maquinas = st.multiselect(f"Asignar celdas:", options=opciones_visibles, default=maquinas_del_operario, key=f"ms_{operario}")
                 
                 if nuevas_maquinas != maquinas_del_operario:
                     st.session_state.propuesta_actual[operario] = nuevas_maquinas
                     st.rerun()
 
-                # ---- MÓDULO MATEMÁTICO REAL PROTEGIDO ----
                 carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_maquinas]) if nuevas_maquinas else 0.0
                 carga_desplazamiento = calcular_carga_caminado(nuevas_maquinas) if nuevas_maquinas else 0.0
                 
@@ -282,14 +270,13 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga Total Real: {carga_total_real:.1f}%")
 
-                # Alertas Visuales Estrictas Poka-Yoke (Anti-Error Manual)
                 if "904" in nuevas_maquinas and "928" in nuevas_maquinas:
                     st.error("🚨 CRÍTICO: Combinación 928+904 prohibida por distancia extrema.")
                 if operario == "Operario 1" and "902" in nuevas_maquinas and "927" in nuevas_maquinas and st.session_state.version_902 == "Cánula Larga (45.0%)":
                     st.error("🚨 CRÍTICO: Prohibido juntar M-927 + M-902 en Cánula Larga.")
 
 # -------------------------------------------------------------------------
-# 7. BOTONERA DE ACCIÓN E IMPRESIÓN DE REPORTE
+# 6. SOLUCIÓN AL BOTÓN DE IMPRESIÓN (NATIVO E INFALIBLE)
 # -------------------------------------------------------------------------
 st.write("---")
 col_btn1, col_btn2 = st.columns(2)
@@ -300,23 +287,22 @@ with col_btn1:
         st.rerun()
 
 with col_btn2:
-    st.markdown("""
-        <style>
-        .print-button {
-            background-color: #4CAF50;
+    # Este componente iframe inyecta el botón directamente forzando la cola de impresión del sistema de forma robusta
+    components.html("""
+        <button style="
+            background-color: #24a0ed;
             border: none;
             color: white;
-            padding: 10px 24px;
+            padding: 11px 20px;
             text-align: center;
             text-decoration: none;
             display: inline-block;
             font-size: 16px;
-            margin: 4px 2px;
+            margin: 0px;
             cursor: pointer;
             width: 100%;
-            border-radius: 8px;
+            border-radius: 4px;
+            font-family: sans-serif;
             font-weight: bold;
-        }
-        </style>
-        <button class="print-button" onclick="window.print()">🖨️ Imprimir / Exportar Reporte de Turno</button>
-    """, unsafe_allow_html=True)
+        " onclick="window.parent.print()">🖨️ Imprimir / Exportar Reporte de Turno</button>
+    """, height=50)
