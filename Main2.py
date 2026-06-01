@@ -178,7 +178,7 @@ with st.sidebar:
     st.markdown("### 🏃 Parámetro Ergonómico: **1.2 m/s**")
     
     st.markdown("---")
-    st.markdown("### ⚙️ Variante de Production")
+    st.markdown("### ⚙️ Variante de Producción")
     version_sel = st.selectbox(
         "M-902 - Tipo de Cánula:", 
         options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], 
@@ -234,7 +234,7 @@ maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
 # -------------------------------------------------------------------------
-# PANEL COCKPIT - MÈTRICAS GENERALES DE PLANTA
+# PANEL COCKPIT - MÉTRICAS GENERALES DE PLANTA
 # -------------------------------------------------------------------------
 total_celdas_num = len(maquinas_activas)
 total_ops_num = len(ops_activos)
@@ -250,7 +250,7 @@ with col_kpi3:
     st.metric(label="📊 Factor de Saturación Promedio", value=f"{carga_media_global:.1f}%")
 
 # -------------------------------------------------------------------------
-# SECCIÓN CENTRAL: MONITOR DE TRABAJO Y ALERTAS POKAYOKE
+# SECCIÓN CENTRAL: MONITOR DE TRABAJO Y RENDERIZADO DE TARJETAS (CON RESET VISUAL)
 # -------------------------------------------------------------------------
 st.markdown("---")
 st.markdown("## 📊 Distribución Dinámica de Células de Trabajo")
@@ -260,14 +260,17 @@ maquinas_asignadas_en_memoria = []
 for op in ops_activos:
     maquinas_asignadas_en_memoria.extend(st.session_state.mapa_asignaciones.get(op, []))
 
-# Alerta visible e infalible si queda alguna máquina libre trabajando sola
+# Alerta visible si queda alguna máquina libre trabajando sola
 maquinas_faltantes = set(maquinas_activas) - set(maquinas_asignadas_en_memoria)
 if maquinas_faltantes:
     st.error(f"⚠️ ATENCIÓN: Hay celdas operando sin ningún operario asignado: {', '.join(sorted(maquinas_faltantes))}")
 else:
     st.success("✅ Cobertura Total: Todas las celdas asignadas eficientemente.")
 
-# Renderizado de Tarjetas de Operarios
+# Creamos un identificador único que cambia según la variante.
+# Esto fuerza a Streamlit a destruir y redibujar los componentes de multiselect evitando asincronías visuales.
+id_variante_actual = st.session_state.version_902.replace(" ", "_").replace("(", "").replace(")", "").replace("%", "")
+
 cols_res = st.columns(4)
 for idx, operario in enumerate(LISTA_8_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
@@ -292,12 +295,12 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 maquinas_actuales_del_op = [m for m in maquinas_actuales_del_op if m in maquinas_activas]
                 opciones_finales = sorted(list(set(opciones_disponibles) | set(maquinas_actuales_del_op)))
 
-                # 3. Renderizar el componente visual usando el mapa de sesión limpio como default constante
+                # 3. Componente corregido usando llave dinámica compuesta para sincronización visual
                 nuevas_maquinas = st.multiselect(
                     f"Celdas asignadas:", 
                     options=opciones_finales, 
                     default=maquinas_actuales_del_op,
-                    key=f"ms_view_{operario}_{st.session_state.version_902.split()[0]}" # Clave dinámica para forzar refresco limpio en cambios
+                    key=f"ms_final_{operario}_{id_variante_actual}"
                 )
                 
                 # Sincronizar el cambio manual inmediatamente con la memoria principal
