@@ -72,12 +72,7 @@ def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, ca
             asignacion["Operario 1"].append("902")
             maquinas_por_asignar.remove("902")
 
-    # Hito 3: Bloque Operario 8 (Celdas mecánicas 916 y 904)
-    if "Operario 8" in operarios_disponibles:
-        for m in ["916", "904"]:
-            if m in maquinas_por_asignar:
-                asignacion["Operario 8"].append(m)
-                maquinas_por_asignar.remove(m)
+ 
 
     # Hito 4 & 6: REGLA DE ORO CÁNULA LARGA -> PRIORIDAD ABSOLUTA COMBINACIÓN 902 + 906
     if variante_902 == "Cánula Larga (45.0%)":
