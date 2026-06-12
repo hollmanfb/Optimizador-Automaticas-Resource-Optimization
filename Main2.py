@@ -233,7 +233,7 @@ with st.sidebar:
             st.session_state.sync_version += 1
             st.rerun()
 
-# Lógica global de ejecución de la optimización
+# Lógica de optimización maestra
 def aplicar_optimizacion_maestra():
     bloques_optimos = optimizar_celdas_abstractas(maquinas_activas, len(ops_activos), cargas_dinamicas_turno, st.session_state.version_902)
     nuevo_mapa = {op: [] for op in LISTA_8_OPERARIOS}
@@ -242,7 +242,7 @@ def aplicar_optimizacion_maestra():
             nuevo_mapa[op] = bloques_optimos[idx]
     st.session_state.mapa_asignaciones = nuevo_mapa
 
-# Inicializar si está vacío
+# Inicializador inicial de mapeo
 maquinas_mapeadas = []
 for op in ops_activos:
     maquinas_mapeadas.extend(st.session_state.mapa_asignaciones.get(op, []))
@@ -254,7 +254,7 @@ if not maquinas_mapeadas and maquinas_activas:
 # -------------------------------------------------------------------------
 st.markdown("## 📊 Distribución Dinámica de Células de Trabajo")
 
-# --- NUEVO: RECOLECCIÓN DE MÉTRICAS PARA EL RESUMEN DEL HEAD ---
+# Recolección e cálculo exacto para las métricas del Head
 total_carga_estatica_planta = 0.0
 total_carga_caminado_planta = 0.0
 
@@ -268,7 +268,7 @@ saturacion_promedio_planta = 0.0
 if num_operarios_vivos > 0:
     saturacion_promedio_planta = ((total_carga_estatica_planta + total_carga_caminado_planta) / num_operarios_vivos) * 100
 
-# --- RENDERIZADO DEL RESUMEN DEL HEAD (KPIs SOLICITADOS) ---
+# Renderizado de KPIs en Cabecera
 with st.container(border=True):
     st.markdown("#### 📈 Resumen General de Planta (Turno Actual)")
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
@@ -281,13 +281,16 @@ with st.container(border=True):
     with col_kpi4:
         st.metric("Variante M-902", "CORTA" if st.session_state.version_902 == "Cánula Corta (37.1%)" else "LARGA")
 
-st.write("") # Separador visual
+st.write("") 
 
-# Control de Cobertura en tiempo real
-maquinas_en_pantalla = []
+# --- CORRECCIÓN CRÍTICA DE COBERTURA (POKAYOKE ALERTA FANTASMA) ---
+# Recolectamos lo que está actualmente en el diccionario global antes del renderizado de inputs
+maquinas_asignadas_reales = []
 for op in ops_activos:
-    maquinas_en_pantalla.extend(st.session_state.mapa_asignaciones.get(op, []))
-maquinas_huerfanas = sorted(list(set(maquinas_activas) - set(maquinas_en_pantalla)))
+    maquinas_asignadas_reales.extend(st.session_state.mapa_asignaciones.get(op, []))
+
+# Filtrado estricto para evitar falsas alertas de celdas huérfanas
+maquinas_huerfanas = sorted(list(set(maquinas_activas) - set(maquinas_asignadas_reales)))
 
 if maquinas_huerfanas:
     st.error(f"⚠️ ATENCIÓN: Hay celdas operando sin ningún operario asignado: {', '.join(maquinas_huerfanas)}")
@@ -307,6 +310,7 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 st.markdown("<span style='color:grey; font-style:italic;'>❌ Turno Libre / Ausencia</span>", unsafe_allow_html=True)
                 st.session_state.mapa_asignaciones[operario] = []
             else:
+                # Calcular qué celdas tienen otros compañeros para la exclusión mutua
                 celdas_ocupadas_otros = []
                 for otro_op in ops_activos:
                     if otro_op != operario:
@@ -316,15 +320,20 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 mis_celdas_actuales = [m for m in st.session_state.mapa_asignaciones.get(operario, []) if m in maquinas_activas]
                 opciones_finales_combo = sorted(list(set(opciones_disponibles_combo) | set(mis_celdas_actuales)))
 
+                # UNIFICADO A "Celdas asignadas:" con llave limpia de persistencia mutua
                 nuevas_celdas = st.multiselect(
-                    f"Asignar celdas:",
+                    "Celdas asignadas:",
                     options=opciones_finales_combo,
                     default=mis_celdas_actuales,
-                    key=f"combo_sync_v{st.session_state.sync_version}_{operario}"
+                    key=f"mselect_{operario}_v{st.session_state.sync_version}"
                 )
                 
-                st.session_state.mapa_asignaciones[operario] = nuevas_celdas
+                # Escritura directa e inmediata en el estado de la sesión
+                if nuevas_celdas != mis_celdas_actuales:
+                    st.session_state.mapa_asignaciones[operario] = nuevas_celdas
+                    st.rerun()
 
+                # Cálculos basados exactamente en la selección en vivo
                 carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_celdas])
                 carga_dinamica = calcular_carga_caminado(nuevas_celdas)
                 carga_total_real = (carga_estatica + carga_dinamica) * 100.0
@@ -333,13 +342,13 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 st.markdown(f"**Carga de Traslado:** {carga_dinamica*100:.1f}%")
                 
                 if carga_total_real > 110.0:
-                    st.error(f"💥 Carga Total: {carga_total_real:.1f}%")
+                    st.error(f"💥 Carga Total Real: {carga_total_real:.1f}%")
                 elif carga_total_real > 95.0:
-                    st.warning(f"⚠️ Carga Total: {carga_total_real:.1f}%")
+                    st.warning(f"⚠️ Carga Total Real: {carga_total_real:.1f}%")
                 elif carga_total_real == 0.0:
                     st.info("Sin carga asignada")
                 else:
-                    st.success(f"⚡ Carga Total: {carga_total_real:.1f}%")
+                    st.success(f"⚡ Carga Total Real: {carga_total_real:.1f}%")
 
                 if "904" in nuevas_celdas and "928" in nuevas_celdas:
                     st.error("🚨 RESTRICCIÓN: Combinación 928+904 inválida por distancia.")
