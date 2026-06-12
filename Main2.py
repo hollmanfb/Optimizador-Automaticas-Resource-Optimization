@@ -48,26 +48,22 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN ABSTRACTO (CORREGIDO SIN ERRORES DE SINTAXIS)
+# MOTOR DE OPTIMIZACIÓN ABSTRACTO
 # -------------------------------------------------------------------------
 def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902):
-    """
-    Crea bloques de trabajo óptimos independientes de a qué operario se le asigne.
-    Retorna una lista de listas (bloques).
-    """
     bloques = []
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
     if num_operarios_disponibles <= 0:
         return bloques
 
-    # 1. Extraer cargas completas críticas inamovibles (917, 924, 928)
+    # 1. Cargas críticas fijas
     for m in ["917", "924", "928"]:
         if m in maquinas_por_asignar:
             bloques.append([m])
             maquinas_por_asignar.remove(m)
 
-    # 2. Agrupación estructural del Bloque Mecánico (916 + 904)
+    # 2. Bloque Mecánico Integrado (916 + 904)
     bloque_mecanico = []
     for m in ["916", "904"]:
         if m in maquinas_por_asignar:
@@ -76,9 +72,8 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
     if bloque_mecanico:
         bloques.append(bloque_mecanico)
 
-    # 3. Lógica operativa del pasillo central según Variante de Producción
+    # 3. Pasillo central según variante
     if variante_902 == "Cánula Larga (45.0%)":
-        # Bloque Estratégico Dorado (902 + 906)
         bloque_dorado = []
         for m in ["902", "906"]:
             if m in maquinas_por_asignar:
@@ -87,7 +82,6 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         if bloque_dorado:
             bloques.append(bloque_dorado)
             
-        # El resto del pasillo (907, 903) conforma otro grupo natural
         bloque_pasillo = []
         for m in ["907", "903"]:
             if m in maquinas_por_asignar:
@@ -96,7 +90,6 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         if bloque_pasillo:
             bloques.append(bloque_pasillo)
     else:
-        # Cánula Corta: Todo el pasillo central unificado (906 + 907 + 903)
         bloque_central = []
         for m in ["906", "907", "903"]:
             if m in maquinas_por_asignar:
@@ -105,7 +98,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         if bloque_central:
             bloques.append(bloque_central)
 
-    # 4. Bloque Pasillo Izquierdo (922 + 911 + 905)
+    # 4. Pasillo Izquierdo
     bloque_izq = []
     for m in ["922", "911", "905"]:
         if m in maquinas_por_asignar:
@@ -114,7 +107,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
     if bloque_izq:
         bloques.append(bloque_izq)
 
-    # 5. La celda 927 (Fin de línea derecho) busca emparejarse si queda espacio libre
+    # 5. Fin de línea derecho (927)
     if "927" in maquinas_por_asignar:
         if variante_902 == "Cánula Corta (37.1%)" and "902" in maquinas_por_asignar:
             bloques.append(["927", "902"])
@@ -124,15 +117,13 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
             bloques.append(["927"])
             maquinas_por_asignar.remove("927")
 
-    # 6. Distribución de Remanentes puros (ej. 923) por balanceo dinámico y cercanía real
-    # CORREGIDO AQUÍ: Cambio de maquinas_por_assignar a maquinas_por_asignar
+    # 6. Distribución de Remanentes por cercanía
     maquinas_por_asignar.sort(key=lambda x: -cargas_activas.get(x, 0))
     for m in list(maquinas_por_asignar):
         mejor_bloque_idx = None
         menor_incremento_caminado = float('inf')
         
         for idx, blk in enumerate(bloques):
-            # Pokayoke de distancias prohibitivas dentro de un mismo bloque
             if m == "904" and "928" in blk: continue
             if m == "928" and "904" in blk: continue
             if variante_902 == "Cánula Larga (45.0%)" and "927" in blk and m == "923": continue
@@ -150,7 +141,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
             bloques[mejor_bloque_idx].append(m)
             maquinas_por_asignar.remove(m)
 
-    # 7. Forzado absoluto final si quedan huérfanas
+    # 7. Forzado final si hay huérfanas
     for m in list(maquinas_por_asignar):
         if not bloques:
             bloques.append([m])
@@ -159,7 +150,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
             bloques[idx_menos_cargado].append(m)
         maquinas_por_asignar.remove(m)
 
-    # Ajustar cantidad de bloques generados a la cantidad real de operarios disponibles en planta
+    # Ajuste de bloques al personal disponible
     while len(bloques) > num_operarios_disponibles:
         blk_a_disolver = bloques.pop()
         for m in blk_a_disolver:
@@ -242,9 +233,7 @@ with st.sidebar:
             st.session_state.sync_version += 1
             st.rerun()
 
-# -------------------------------------------------------------------------
-# CAPA LOGÍSTICA DE MAPEO UNIFICADO
-# -------------------------------------------------------------------------
+# Lógica global de ejecución de la optimización
 def aplicar_optimizacion_maestra():
     bloques_optimos = optimizar_celdas_abstractas(maquinas_activas, len(ops_activos), cargas_dinamicas_turno, st.session_state.version_902)
     nuevo_mapa = {op: [] for op in LISTA_8_OPERARIOS}
@@ -253,7 +242,7 @@ def aplicar_optimizacion_maestra():
             nuevo_mapa[op] = bloques_optimos[idx]
     st.session_state.mapa_asignaciones = nuevo_mapa
 
-# Si las asignaciones actuales están vacías y hay máquinas, inicializar
+# Inicializar si está vacío
 maquinas_mapeadas = []
 for op in ops_activos:
     maquinas_mapeadas.extend(st.session_state.mapa_asignaciones.get(op, []))
@@ -261,11 +250,40 @@ if not maquinas_mapeadas and maquinas_activas:
     aplicar_optimizacion_maestra()
 
 # -------------------------------------------------------------------------
-# INTERFAZ CENTRAL: TARJETAS 100% SIMÉTRICAS E INDEPENDIENTES
+# INTERFAZ CENTRAL
 # -------------------------------------------------------------------------
 st.markdown("## 📊 Distribución Dinámica de Células de Trabajo")
 
-# Control de Cobertura en tiempo real leyendo directamente la sesión activa
+# --- NUEVO: RECOLECCIÓN DE MÉTRICAS PARA EL RESUMEN DEL HEAD ---
+total_carga_estatica_planta = 0.0
+total_carga_caminado_planta = 0.0
+
+for op in ops_activos:
+    celdas_op = st.session_state.mapa_asignaciones.get(op, [])
+    total_carga_estatica_planta += sum([cargas_dinamicas_turno.get(m, 0.0) for m in celdas_op])
+    total_carga_caminado_planta += calcular_carga_caminado(celdas_op)
+
+num_operarios_vivos = len(ops_activos)
+saturacion_promedio_planta = 0.0
+if num_operarios_vivos > 0:
+    saturacion_promedio_planta = ((total_carga_estatica_planta + total_carga_caminado_planta) / num_operarios_vivos) * 100
+
+# --- RENDERIZADO DEL RESUMEN DEL HEAD (KPIs SOLICITADOS) ---
+with st.container(border=True):
+    st.markdown("#### 📈 Resumen General de Planta (Turno Actual)")
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    with col_kpi1:
+        st.metric("Celdas Activas en Planta", f"{len(maquinas_activas)} / {len(cargas_dinamicas_turno)}")
+    with col_kpi2:
+        st.metric("Operarios Disponibles", f"{num_operarios_vivos} / 8")
+    with col_kpi3:
+        st.metric("Saturación Promedio Planta", f"{saturacion_promedio_planta:.1f}%")
+    with col_kpi4:
+        st.metric("Variante M-902", "CORTA" if st.session_state.version_902 == "Cánula Corta (37.1%)" else "LARGA")
+
+st.write("") # Separador visual
+
+# Control de Cobertura en tiempo real
 maquinas_en_pantalla = []
 for op in ops_activos:
     maquinas_en_pantalla.extend(st.session_state.mapa_asignaciones.get(op, []))
@@ -276,7 +294,7 @@ if maquinas_huerfanas:
 else:
     st.success("✅ Cobertura Total: Todas las celdas asignadas eficientemente.")
 
-# Renderizado de Tarjetas de Operarios
+# Renderizado de Tarjetas Simétricas
 cols_tarjetas = st.columns(4)
 for idx, operario in enumerate(LISTA_8_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
@@ -289,7 +307,6 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 st.markdown("<span style='color:grey; font-style:italic;'>❌ Turno Libre / Ausencia</span>", unsafe_allow_html=True)
                 st.session_state.mapa_asignaciones[operario] = []
             else:
-                # Obtener qué celdas tienen otros compañeros para no duplicar en el selector
                 celdas_ocupadas_otros = []
                 for otro_op in ops_activos:
                     if otro_op != operario:
@@ -299,7 +316,6 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 mis_celdas_actuales = [m for m in st.session_state.mapa_asignaciones.get(operario, []) if m in maquinas_activas]
                 opciones_finales_combo = sorted(list(set(opciones_disponibles_combo) | set(mis_celdas_actuales)))
 
-                # El selector escribe directamente en la sesión global sin bloqueos por jerarquía de nombres
                 nuevas_celdas = st.multiselect(
                     f"Asignar celdas:",
                     options=opciones_finales_combo,
@@ -307,10 +323,8 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                     key=f"combo_sync_v{st.session_state.sync_version}_{operario}"
                 )
                 
-                # Sincronización de datos inmediata al interactuar manualmente
                 st.session_state.mapa_asignaciones[operario] = nuevas_celdas
 
-                # Cálculos matemáticos basados estrictamente en la selección viva de pantalla
                 carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_celdas])
                 carga_dinamica = calcular_carga_caminado(nuevas_celdas)
                 carga_total_real = (carga_estatica + carga_dinamica) * 100.0
