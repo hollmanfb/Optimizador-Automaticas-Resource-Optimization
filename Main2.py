@@ -48,119 +48,133 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN CORREGIDO POR CERCANÍA REAL GEOGRÁFICA
+# MOTOR DE OPTIMIZACIÓN ABSTRACTO (TRATA A LOS OPERARIOS COMO IRRELEVANTES)
 # -------------------------------------------------------------------------
-def optimizar_con_operarios_fijos(maquinas_trabajando, operarios_disponibles, cargas_activas, variante_902):
-    asignacion = {op: [] for op in LISTA_8_OPERARIOS}
+def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902):
+    """
+    Crea bloques de trabajo óptimos independientes de a qué operario se le asigne.
+    Retorna una lista de listas (bloques).
+    """
+    bloques = []
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
-    if not operarios_disponibles:
-        return asignacion
+    if num_operarios_disponibles <= 0:
+        return bloques
 
-    # Hito 1: Celdas de Carga Completa (100%) Inamovibles
-    mapeo_estricto = {"917": "Operario 4", "924": "Operario 6", "928": "Operario 7"}
-    for m, op in mapeo_estricto.items():
-        if m in maquinas_por_asignar and op in operarios_disponibles:
-            asignacion[op].append(m)
+    # 1. Extraer cargas completas críticas inamovibles (917, 924, 928)
+    for m in ["917", "924", "928"]:
+        if m in maquinas_por_asignar:
+            bloques.append([m])
             maquinas_por_asignar.remove(m)
 
-    # Hito 2: Fin de Línea Derecho (Operario 1)
-    if "Operario 1" in operarios_disponibles and "927" in maquinas_por_asignar:
-        asignacion["Operario 1"].append("927")
-        maquinas_por_asignar.remove("927")
-        if variante_902 == "Cánula Corta (37.1%)" and "902" in maquinas_por_asignar:
-            asignacion["Operario 1"].append("902")
-            maquinas_por_asignar.remove("902")
+    # 2. Agrupación estructural natural del Bloque Mecánico (916 + 904)
+    bloque_mecanico = []
+    for m in ["916", "904"]:
+        if m in maquinas_por_asignar:
+            bloque_mecanico.append(m)
+            maquinas_por_asignar.remove(m)
+    if bloque_mecanico:
+        bloques.append(bloque_mecanico)
 
- 
-
-    # Hito 4 & 6: REGLA DE ORO CÁNULA LARGA -> PRIORIDAD ABSOLUTA COMBINACIÓN 902 + 906
+    # 3. Lógica operativa del pasillo central según Variante de Producción
     if variante_902 == "Cánula Larga (45.0%)":
-        if "Operario 5" in operarios_disponibles:
-            if "902" in maquinas_por_asignar:
-                asignacion["Operario 5"].append("902")
-                maquinas_por_asignar.remove("902")
-            if "906" in maquinas_por_asignar:
-                asignacion["Operario 5"].append("906")
-                maquinas_por_asignar.remove("906")
-        
-        # El resto del pasillo central (907, 903) pasa directamente a balancear al Operario 3
-        if "Operario 3" in operarios_disponibles:
-            for m in ["907", "903"]:
-                if m in maquinas_por_asignar:
-                    asignacion["Operario 3"].append(m)
-                    maquinas_por_asignar.remove(m)
-    else:
-        # Si es Cánula Corta, el pasillo completo (906, 907, 903) se le entrega al Operario 3
-        if "Operario 3" in operarios_disponibles:
-            for m in ["906", "907", "903"]:
-                if m in maquinas_por_asignar:
-                    asignacion["Operario 3"].append(m)
-                    maquinas_por_asignar.remove(m)
-
-    # Hito 5: Bloque Pasillo Izquierdo (Operario 2)
-    if "Operario 2" in operarios_disponibles:
-        for m in ["922", "911", "905"]:
+        # Bloque Estratégico Dorado (902 + 906)
+        bloque_dorado = []
+        for m in ["902", "906"]:
             if m in maquinas_por_asignar:
-                asignacion["Operario 2"].append(m)
+                bloque_dorado.append(m)
                 maquinas_por_asignar.remove(m)
+        if bloque_dorado:
+            bloques.append(bloque_dorado)
+            
+        # El resto del pasillo (907, 903) conforma otro grupo natural
+        bloque_pasillo = []
+        for m in ["907", "903"]:
+            if m in maquinas_por_asignar:
+                bloque_pasillo.append(m)
+                maquinas_por_asignar.remove(m)
+        if bloque_pasillo:
+            bloques.append(bloque_pasillo)
+    else:
+        # Cánula Corta: Todo el pasillo central unificado (906 + 907 + 903)
+        bloque_central = []
+        for m in ["906", "907", "903"]:
+            if m in maquinas_por_asignar:
+                bloque_central.append(m)
+                maquinas_por_asignar.remove(m)
+        if bloque_central:
+            bloques.append(bloque_central)
 
-    # ORDENAR REMANENTES (ej. 923) para asignación inteligente por proximidad
+    # 4. Bloque Pasillo Izquierdo (922 + 911 + 905)
+    bloque_izq = []
+    for m in ["922", "911", "905"]:
+        if m in maquinas_por_asignar:
+            bloque_izq.append(m)
+            maquinas_por_asignar.remove(m)
+    if bloque_izq:
+        bloques.append(bloque_izq)
+
+    # 5. La celda 927 (Fin de línea derecho) busca emparejarse si queda espacio libre
+    if "927" in maquinas_por_asignar:
+        # En Cánula Corta, si la 902 no fue absorbida por el pasillo y está libre, se une a la 927
+        if variante_902 == "Cánula Corta (37.1%)" and "902" in maquinas_por_asignar:
+            bloques.append(["927", "902"])
+            maquinas_por_asignar.remove("927")
+            maquinas_por_asignar.remove("902")
+        else:
+            bloques.append(["927"])
+            maquinas_por_asignar.remove("927")
+
+    # 6. Distribución de Remanentes puros (ej. 923) por balanceo dinámico y cercanía real
     maquinas_por_asignar.sort(key=lambda x: -cargas_activas.get(x, 0))
-
-    # Reparto dinámico inteligente optimizado por proximidad geográfica real
-    for m in list(maquinas_por_asignar):
-        mejor_op = None
+    for m in list(maquinas_por_assignar):
+        mejor_bloque_idx = None
         menor_incremento_caminado = float('inf')
-        menor_carga_total = float('inf')
         
-        for op in operarios_disponibles:
-            # Restricciones operativas duras
-            if m == "904" and "928" in asignacion[op]: continue
-            if m == "928" and "904" in asignacion[op]: continue
-            
-            # POKAYOKE: Evitar mandar la lejana 923 al Operario 1 si tiene la 927 en Cánula Larga
-            if variante_902 == "Cánula Larga (45.0%)" and op == "Operario 1" and m == "923": continue
+        for idx, blk in enumerate(bloques):
+            # Pokayoke de distancias prohibitivas dentro de un mismo bloque
+            if m == "904" and "928" in blk: continue
+            if m == "928" and "904" in blk: continue
+            if variante_902 == "Cánula Larga (45.0%)" and "927" in blk and m == "923": continue
 
-            maqs_proyectadas = asignacion[op] + [m]
-            carga_estatica = sum([cargas_activas[x] for x in maqs_proyectadas])
-            carga_dinamica = calcular_carga_caminado(maqs_proyectadas)
-            carga_total = carga_estatica + carga_dinamica
+            test_blk = blk + [m]
+            carga_estatica = sum([cargas_activas[x] for x in test_blk])
+            carga_dinamica = calcular_carga_caminado(test_blk)
             
-            if carga_total <= MAX_SATURACION_ESTANDAR:
-                # Priorizamos al operario donde la máquina quede más cerca (menor carga de traslado)
+            if (carga_estatica + carga_dinamica) <= MAX_SATURACION_ESTANDAR:
                 if carga_dinamica < menor_incremento_caminado:
                     menor_incremento_caminado = carga_dinamica
-                    menor_carga_total = carga_total
-                    mejor_op = op
+                    mejor_bloque_idx = idx
                     
-        if mejor_op:
-            asignacion[mejor_op].append(m)
+        if mejor_bloque_idx is not None:
+            bloques[mejor_bloque_idx].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Forzado de seguridad absoluto (Para que ninguna celda quede huérfana jamás)
+    # 7. Forzado absoluto final si quedan huérfanas
     for m in list(maquinas_por_asignar):
-        ops_validos = [o for o in operarios_disponibles if not (m == "904" and "928" in asignacion[o])]
-        if variante_902 == "Cánula Larga (45.0%)" and m == "923" and "Operario 8" in ops_validos:
-            op_menos_cargado = "Operario 8"  # Forzado preferencial ergonómico pedido por planta
+        if not bloques:
+            bloques.append([m])
         else:
-            if not ops_validos: ops_validos = list(operarios_disponibles)
-            op_menos_cargado = min(ops_validos, key=lambda o: sum([cargas_activas[x] for x in asignacion[o]]) + calcular_carga_caminado(asignacion[o]))
-        
-        asignacion[op_menos_cargado].append(m)
+            idx_menos_cargado = min(range(len(bloques)), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]) + calcular_carga_caminado(bloques[i]))
+            bloques[idx_menos_cargado].append(m)
         maquinas_por_asignar.remove(m)
 
-    return asignacion
+    # Ajustar cantidad de bloques generados a la cantidad real de operarios disponibles en planta
+    while len(bloques) > num_operarios_disponibles:
+        blk_a_disolver = bloques.pop()
+        for m in blk_a_disolver:
+            idx_destino = min(range(len(bloques)), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]) + calcular_carga_caminado(bloques[i]))
+            bloques[idx_destino].append(m)
+
+    return bloques
 
 # -------------------------------------------------------------------------
-# INTERFAZ Y CONFIGURACIÓN GENERAL (STREAMLIT)
+# INTERFAZ Y REFRESCO DE DATOS (STREAMLIT)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
 
 if "version_902" not in st.session_state:
     st.session_state.version_902 = "Cánula Corta (37.1%)"
-
-# CONTADOR MAESTRO DE REFRESCO (Soluciona el bloqueo visual de los botones)
 if "sync_version" not in st.session_state:
     st.session_state.sync_version = 0
 
@@ -175,57 +189,49 @@ if "estados_maquinas" not in st.session_state:
 if "estados_operarios" not in st.session_state:
     st.session_state.estados_operarios = {op: "Disponible" for op in LISTA_8_OPERARIOS}
 
+# Inicialización limpia de mapa de asignación
+if "mapa_asignaciones" not in st.session_state:
+    st.session_state.mapa_asignaciones = {op: [] for op in LISTA_8_OPERARIOS}
+
 maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
-if "mapa_asignaciones" not in st.session_state:
-    st.session_state.mapa_asignaciones = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
-
 # -------------------------------------------------------------------------
-# CONTROL LATERAL DE PLANTA (SIDEBAR)
+# PANEL LATERAL (SIDEBAR)
 # -------------------------------------------------------------------------
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
-    st.markdown("### 🏃 Parámetro Ergonómico: **1.2 m/s**")
-    
+    st.markdown("### 🏃 Ergonómico: **1.2 m/s**")
     st.markdown("---")
-    st.markdown("### ⚙️ Variante de Producción")
+    
     version_sel = st.selectbox(
         "M-902 - Tipo de Cánula:", 
         options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], 
         index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1
     )
-    
     if version_sel != st.session_state.version_902:
         st.session_state.version_902 = version_sel
-        cargas_dinamicas_turno["902"] = 0.4500 if version_sel == "Cánula Larga (45.0%)" else 0.3712
-        st.session_state.mapa_asignaciones = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, version_sel)
-        st.session_state.sync_version += 1  # Forzar re-pintado completo
+        st.session_state.sync_version += 1
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### ⚙️ Estado Operativo de Celdas")
+    st.markdown("### ⚙️ Estado de Celdas")
     for m in sorted(list(cargas_dinamicas_turno.keys())):
         est_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
-        st.markdown(f"**Celda {m}** — Carga: {cargas_dinamicas_turno[m]*100:.1f}%")
-        col_act, col_par = st.columns(2)
-        
-        with col_act:
-            if st.button(f"🟢 Activa", key=f"btn_act_{m}", use_container_width=True, type="primary" if est_actual == "Trabajando" else "secondary"):
-                st.session_state.estados_maquinas[m] = "Trabajando"
-                maquinas_activas_update = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-                st.session_state.mapa_asignaciones = optimizar_con_operarios_fijos(maquinas_activas_update, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
-                st.session_state.sync_version += 1
-                st.rerun()
-                
-        with col_par:
-            if st.button(f"🔴 Parada", key=f"btn_par_{m}", use_container_width=True, type="primary" if est_actual == "Día Libre" else "secondary"):
-                st.session_state.estados_maquinas[m] = "Día Libre"
-                for op_key in LISTA_8_OPERARIOS:
-                    if m in st.session_state.mapa_asignaciones.get(op_key, []):
-                        st.session_state.mapa_asignaciones[op_key].remove(m)
-                st.session_state.sync_version += 1
-                st.rerun()
+        col_lbl, col_btn = st.columns([2, 1])
+        with col_lbl:
+            st.markdown(f"**{m}** ({cargas_dinamicas_turno[m]*100:.1f}%)")
+        with col_btn:
+            if est_actual == "Trabajando":
+                if st.button("🟢", key=f"p_{m}"):
+                    st.session_state.estados_maquinas[m] = "Día Libre"
+                    st.session_state.sync_version += 1
+                    st.rerun()
+            else:
+                if st.button("🔴", key=f"a_{m}"):
+                    st.session_state.estados_maquinas[m] = "Trabajando"
+                    st.session_state.sync_version += 1
+                    st.rerun()
 
     st.markdown("---")
     st.markdown("### 👤 Disponibilidad de Personal")
@@ -234,88 +240,80 @@ with st.sidebar:
         sel_op = st.selectbox(f"{op}:", options=["Disponible", "Día Libre"], key=f"s_{op}", index=0 if estado_previo == "Disponible" else 1)
         if sel_op != estado_previo:
             st.session_state.estados_operarios[op] = sel_op
-            if sel_op == "Día Libre":
-                st.session_state.mapa_asignaciones[op] = []
             st.session_state.sync_version += 1
             st.rerun()
 
-# Actualizar listas tras Sidebar
-maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v == "Trabajando"]
-ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
+# -------------------------------------------------------------------------
+# CAPA LOGÍSTICA DE MAPEO (ELIMINA LA DISCRIMINACIÓN ENTRE OPERARIOS)
+# -------------------------------------------------------------------------
+def aplicar_optimizacion_maestra():
+    bloques_optimos = optimizar_celdas_abstractas(maquinas_activas, len(ops_activos), cargas_dinamicas_turno, st.session_state.version_902)
+    nuevo_mapa = {op: [] for op in LISTA_8_OPERARIOS}
+    for idx, op in enumerate(ops_activos):
+        if idx < len(bloques_optimos):
+            nuevo_mapa[op] = bloques_optimos[idx]
+    st.session_state.mapa_asignaciones = nuevo_mapa
+
+# Si las asignaciones actuales están vacías y hay máquinas, inicializar de forma limpia
+maquinas_mapeadas = []
+for op in ops_activos:
+    maquinas_mapeadas.extend(st.session_state.mapa_asignaciones.get(op, []))
+if not maquinas_mapeadas and maquinas_activas:
+    aplicar_optimizacion_maestra()
 
 # -------------------------------------------------------------------------
-# PANEL COCKPIT - MÈTRICAS GENERALES DE PLANTA
+# INTERFAZ CENTRAL: TARJETAS 100% SIMÉTRICAS E INDEPENDIENTES
 # -------------------------------------------------------------------------
-total_celdas_num = len(maquinas_activas)
-total_ops_num = len(ops_activos)
-suma_cargas = sum([cargas_dinamicas_turno[m] for m in maquinas_activas])
-carga_media_global = (suma_cargas / total_ops_num * 100) if total_ops_num > 0 else 0.0
-
-col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-with col_kpi1:
-    st.metric(label="🔢 Celdas en Operación", value=f"{total_celdas_num} / 16")
-with col_kpi2:
-    st.metric(label="👥 Operarios en Planta", value=f"{total_ops_num} de 8")
-with col_kpi3:
-    st.metric(label="📊 Factor de Saturación Promedio", value=f"{carga_media_global:.1f}%")
-
-# -------------------------------------------------------------------------
-# SECCIÓN CENTRAL: MONITOR DE TRABAJO Y SISTEMA DE ALERTA REAL POKAYOKE
-# -------------------------------------------------------------------------
-st.markdown("---")
 st.markdown("## 📊 Distribución Dinámica de Células de Trabajo")
 
-# CORRECCIÓN DE ALERTA: Evaluar de forma estricta el estado del renderizado en vivo
-maquinas_asignadas_en_render = []
+# Control de Cobertura en tiempo real
+maquinas_en_pantalla = []
 for op in ops_activos:
-    maquinas_asignadas_en_render.extend(st.session_state.mapa_asignaciones.get(op, []))
+    maquinas_en_pantalla.extend(st.session_state.mapa_asignaciones.get(op, []))
+maquinas_huerfanas = sorted(list(set(maquinas_activas) - set(maquinas_en_pantalla)))
 
-maquinas_faltantes = sorted(list(set(maquinas_activas) - set(maquinas_asignadas_en_render)))
-
-if maquinas_faltantes:
-    st.error(f"⚠️ ATENCIÓN: Hay celdas operando sin ningún operario asignado: {', '.join(maquinas_faltantes)}")
+if maquinas_huerfanas:
+    st.error(f"⚠️ ATENCIÓN: Hay celdas operando sin ningún operario asignado: {', '.join(maquinas_huerfanas)}")
 else:
     st.success("✅ Cobertura Total: Todas las celdas asignadas eficientemente.")
 
-# Renderizado de Tarjetas de Operarios
-cols_res = st.columns(4)
+# Renderizado de Tarjetas (Absolutamente idénticas para todos)
+cols_tarjetas = st.columns(4)
 for idx, operario in enumerate(LISTA_8_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
     
-    with cols_res[idx % 4]:
+    with cols_tarjetas[idx % 4]:
         with st.container(border=True):
             st.markdown(f"### 👤 {operario}")
+            
             if not esta_disponible:
                 st.markdown("<span style='color:grey; font-style:italic;'>❌ Turno Libre / Ausencia</span>", unsafe_allow_html=True)
+                st.session_state.mapa_asignaciones[operario] = []
             else:
-                # 1. Determinar qué celdas tienen ocupadas otros operarios activos
-                otras_maquinas = []
-                for o_ref in ops_activos:
-                    if o_ref != operario:
-                        otras_maquinas.extend(st.session_state.mapa_asignaciones.get(o_ref, []))
+                # Obtener qué celdas tienen otros compañeros para no duplicar en el selector
+                celdas_ocupadas_otros = []
+                for otro_op in ops_activos:
+                    if otro_op != operario:
+                        celdas_ocupadas_otros.extend(st.session_state.mapa_asignaciones.get(otro_op, []))
                 
-                # 2. Opciones elegibles
-                opciones_disponibles = sorted(list(set(maquinas_activas) - set(otras_maquinas)))
-                maquinas_actuales_del_op = st.session_state.mapa_asignaciones.get(operario, [])
-                
-                # Saneamiento Pokayoke para el componente visual
-                maquinas_actuales_del_op = [m for m in maquinas_actuales_del_op if m in maquinas_activas]
-                opciones_finales = sorted(list(set(opciones_disponibles) | set(maquinas_actuales_del_op)))
+                opciones_disponibles_combo = sorted(list(set(maquinas_activas) - set(celdas_ocupadas_otros)))
+                mis_celdas_actuales = [m for m in st.session_state.mapa_asignaciones.get(operario, []) if m in maquinas_activas]
+                opciones_finales_combo = sorted(list(set(opciones_disponibles_combo) | set(mis_celdas_actuales)))
 
-                # 3. Componente integrado con RESET VERDADERO por clave incremental única
-                nuevas_maquinas = st.multiselect(
-                    f"Celdas asignadas:", 
-                    options=opciones_finales, 
-                    default=maquinas_actuales_del_op,
-                    key=f"ms_v{st.session_state.sync_version}_{operario}"
+                # EL SELECTOR DE VERDAD: Lee y escribe directamente en la sesión global sin bloqueos
+                nuevas_celdas = st.multiselect(
+                    f"Asignar celdas:",
+                    options=opciones_finales_combo,
+                    default=mis_celdas_actuales,
+                    key=f"combo_sync_v{st.session_state.sync_version}_{operario}"
                 )
                 
-                # Guardar cambios del selector manual del usuario
-                st.session_state.mapa_asignaciones[operario] = nuevas_maquinas
+                # Sincronización inmediata de datos al persistir la acción del usuario
+                st.session_state.mapa_asignaciones[operario] = nuevas_celdas
 
-                # Cálculos ergonómicos
-                carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_maquinas])
-                carga_dinamica = calcular_carga_caminado(nuevas_maquinas)
+                # Cálculos matemáticos en vivo basados ESTRICTAMENTE en la selección actual
+                carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_celdas])
+                carga_dinamica = calcular_carga_caminado(nuevas_celdas)
                 carga_total_real = (carga_estatica + carga_dinamica) * 100.0
 
                 st.markdown(f"**Carga Estática:** {carga_estatica*100:.1f}%")
@@ -330,22 +328,18 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga Total: {carga_total_real:.1f}%")
 
-                if "904" in nuevas_maquinas and "928" in nuevas_maquinas:
+                if "904" in nuevas_celdas and "928" in nuevas_celdas:
                     st.error("🚨 RESTRICCIÓN: Combinación 928+904 inválida por distancia.")
 
 # -------------------------------------------------------------------------
-# BOTONERA DE ACCIÓN INFERIOR (RECALCULAR MAESTRO CORREGIDO)
+# BOTONERA DE CONTROL INFERIOR
 # -------------------------------------------------------------------------
 st.write("---")
 col_btn1, col_btn2 = st.columns(2)
 
 with col_btn1:
-    if st.button("🔄 Recalcular Optimización por Proximidad Real (IA)", type="primary", use_container_width=True):
-        # 1. Forzar recálculo matemático limpio
-        nueva_propuesta = optimizar_con_operarios_fijos(maquinas_activas, ops_activos, cargas_dinamicas_turno, st.session_state.version_902)
-        st.session_state.mapa_asignaciones = nueva_propuesta
-        
-        # 2. Incrementar versión de sincronización (Fuerza a Streamlit a redibujar todo con la nueva IA)
+    if st.button("🔄 Recalcular Optimización Dinámica (IA)", type="primary", use_container_width=True):
+        aplicar_optimizacion_maestra()
         st.session_state.sync_version += 1
         st.rerun()
 
