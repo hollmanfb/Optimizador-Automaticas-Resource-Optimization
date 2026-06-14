@@ -48,119 +48,108 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN ABSTRACTO
+# MOTOR DE BALANCEO Y OPTIMIZACIÓN MEJORADO
 # -------------------------------------------------------------------------
 def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902):
-    bloques = []
+    if num_operarios_disponibles <= 0:
+        return []
+
+    # Inicializar estructuras para balanceo real de cargas
+    bloques = [[] for _ in range(num_operarios_disponibles)]
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
-    if num_operarios_disponibles <= 0:
-        return bloques
-
-    # 1. Cargas críticas fijas
-    for m in ["917", "924", "928"]:
+    # 1. Asignación de celdas críticas individuales (Carga estática alta)
+    criticas_fijas = ["917", "924", "928"]
+    for m in criticas_fijas:
         if m in maquinas_por_asignar:
-            bloques.append([m])
+            # Buscar el bloque vacío o menos cargado actualmente
+            idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
+            bloques[idx_destino].append(m)
             maquinas_por_asignar.remove(m)
 
-    # 2. Bloque Mecánico Integrado (916 + 904)
+    # 2. Bloque Técnico de Proximidad Obligatoria (916 + 904)
     bloque_mecanico = []
     for m in ["916", "904"]:
         if m in maquinas_por_asignar:
             bloque_mecanico.append(m)
             maquinas_por_asignar.remove(m)
     if bloque_mecanico:
-        bloques.append(bloque_mecanico)
+        idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
+        bloques[idx_destino].extend(bloque_mecanico)
 
-    # 3. Pasillo central según variante
+    # 3. Emparejamientos geográficos por variante M-902
     if variante_902 == "Cánula Larga (45.0%)":
-        bloque_dorado = []
-        for m in ["902", "906"]:
-            if m in maquinas_por_asignar:
-                bloque_dorado.append(m)
-                maquinas_por_asignar.remove(m)
-        if bloque_dorado:
-            bloques.append(bloque_dorado)
-            
-        bloque_pasillo = []
-        for m in ["907", "903"]:
-            if m in maquinas_por_asignar:
-                bloque_pasillo.append(m)
-                maquinas_por_asignar.remove(m)
-        if bloque_pasillo:
-            bloques.append(bloque_pasillo)
+        for par in [["902", "906"], ["907", "903"]]:
+            existentes = [m for m in par if m in maquinas_por_asignar]
+            if existentes:
+                idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
+                bloques[idx_destino].extend(existentes)
+                for m in existentes: maquinas_por_asignar.remove(m)
     else:
-        bloque_central = []
-        for m in ["906", "907", "903"]:
-            if m in maquinas_por_asignar:
-                bloque_central.append(m)
-                maquinas_por_asignar.remove(m)
-        if bloque_central:
-            bloques.append(bloque_central)
+        centrales = [m for m in ["906", "907", "903"] if m in maquinas_por_asignar]
+        if centrales:
+            idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
+            bloques[idx_destino].extend(centrales)
+            for m in centrales: maquinas_por_asignar.remove(m)
 
-    # 4. Pasillo Izquierdo
-    bloque_izq = []
-    for m in ["922", "911", "905"]:
-        if m in maquinas_por_asignar:
-            bloque_izq.append(m)
-            maquinas_por_asignar.remove(m)
-    if bloque_izq:
-        bloques.append(bloque_izq)
+    # 4. Agrupación pasillo izquierdo
+    izquierdas = [m for m in ["922", "911", "905"] if m in maquinas_por_asignar]
+    if izquierdas:
+        idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
+        bloques[idx_destino].extend(izquierdas)
+        for m in izquierdas: maquinas_por_asignar.remove(m)
 
-    # 5. Fin de línea derecho (927)
-    if "927" in maquinas_por_asignar:
-        if variante_902 == "Cánula Corta (37.1%)" and "902" in maquinas_por_asignar:
-            bloques.append(["927", "902"])
-            maquinas_por_asignar.remove("927")
-            maquinas_por_asignar.remove("902")
-        else:
-            bloques.append(["927"])
-            maquinas_por_asignar.remove("927")
-
-    # 6. Distribución de Remanentes por cercanía
+    # 5. Clasificación y reparto del remanente con RESTRICCIONES DURAS (923 Vetos)
+    # Ordenamos de mayor a menor carga para asegurar un reparto equitativo eficiente
     maquinas_por_asignar.sort(key=lambda x: -cargas_activas.get(x, 0))
+    
     for m in list(maquinas_por_asignar):
         mejor_bloque_idx = None
-        menor_incremento_caminado = float('inf')
+        menor_carga_resultante = float('inf')
         
-        for idx, blk in enumerate(bloques):
+        for idx in range(num_operarios_disponibles):
+            blk = bloques[idx]
+            
+            # --- VALIDACIÓN DE RESTRICCIONES DURAS PEDIDAS POR EL USUARIO ---
+            if m == "923" and ("928" in blk or "911" in blk): continue
+            if "923" in blk and (m == "928" or m == "911"): continue
             if m == "904" and "928" in blk: continue
             if m == "928" and "904" in blk: continue
-            if variante_902 == "Cánula Larga (45.0%)" and "927" in blk and m == "923": continue
 
             test_blk = blk + [m]
             carga_estatica = sum([cargas_activas[x] for x in test_blk])
             carga_dinamica = calcular_carga_caminado(test_blk)
+            carga_total = carga_estatica + carga_dinamica
             
-            if (carga_estatica + carga_dinamica) <= MAX_SATURACION_ESTANDAR:
-                if carga_dinamica < menor_incremento_caminado:
-                    menor_incremento_caminado = carga_dinamica
+            # Buscamos equilibrar la planta asignando al operario con menor impacto
+            if carga_total <= MAX_SATURACION_ESTANDAR:
+                if carga_total < menor_carga_resultante:
+                    menor_carga_resultante = carga_total
                     mejor_bloque_idx = idx
                     
         if mejor_bloque_idx is not None:
             bloques[mejor_bloque_idx].append(m)
             maquinas_por_asignar.remove(m)
 
-    # 7. Forzado final si hay huérfanas
+    # 6. Forzado de balanceo final para máquinas huérfanas extremas
     for m in list(maquinas_por_asignar):
-        if not bloques:
-            bloques.append([m])
-        else:
-            idx_menos_cargado = min(range(len(bloques)), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]) + calcular_carga_caminado(bloques[i]))
-            bloques[idx_menos_cargado].append(m)
+        valid_indices = []
+        for idx in range(num_operarios_disponibles):
+            blk = bloques[idx]
+            if m == "923" and ("928" in blk or "911" in blk): continue
+            if "923" in blk and (m == "928" or m == "911"): continue
+            valid_indices.append(idx)
+            
+        target_indices = valid_indices if valid_indices else list(range(num_operarios_disponibles))
+        idx_destino = min(target_indices, key=lambda i: sum([cargas_activas[x] for x in bloques[i]]) + calcular_carga_caminado(bloques[i]))
+        bloques[idx_destino].append(m)
         maquinas_por_asignar.remove(m)
 
-    # Ajuste de bloques al personal disponible
-    while len(bloques) > num_operarios_disponibles:
-        blk_a_disolver = bloques.pop()
-        for m in blk_a_disolver:
-            idx_destino = min(range(len(bloques)), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]) + calcular_carga_caminado(bloques[i]))
-            bloques[idx_destino].append(m)
-
-    return bloques
+    # Filtrar bloques completamente vacíos si los hubiera
+    return [b for b in bloques if b]
 
 # -------------------------------------------------------------------------
-# INTERFAZ Y REFRESCO DE DATOS (STREAMLIT)
+# INTERFAZ DE CONTROL CENTRALIZADA (STREAMLIT)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
 
@@ -187,7 +176,7 @@ maquinas_activas = [k for k, v in st.session_state.estados_maquinas.items() if v
 ops_activos = [k for k, v in st.session_state.estados_operarios.items() if v == "Disponible"]
 
 # -------------------------------------------------------------------------
-# PANEL LATERAL (SIDEBAR)
+# SIDEBAR CONTROL DE PRODUCCIÓN
 # -------------------------------------------------------------------------
 with st.sidebar:
     st.image("https://www.medmix.mixpac.com/images/medmix_Logo_Pos_RGB.svg", width=180)
@@ -205,7 +194,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### ⚙️ Estado de Celdas")
+    st.markdown("### ⚙️ Estado Operativo de Celdas")
     for m in sorted(list(cargas_dinamicas_turno.keys())):
         est_actual = st.session_state.estados_maquinas.get(m, "Trabajando")
         col_lbl, col_btn = st.columns([2, 1])
@@ -233,7 +222,7 @@ with st.sidebar:
             st.session_state.sync_version += 1
             st.rerun()
 
-# Lógica de optimización maestra
+# Función Maestra de Optimización Inteligente Equitativa
 def aplicar_optimizacion_maestra():
     bloques_optimos = optimizar_celdas_abstractas(maquinas_activas, len(ops_activos), cargas_dinamicas_turno, st.session_state.version_902)
     nuevo_mapa = {op: [] for op in LISTA_8_OPERARIOS}
@@ -242,7 +231,7 @@ def aplicar_optimizacion_maestra():
             nuevo_mapa[op] = bloques_optimos[idx]
     st.session_state.mapa_asignaciones = nuevo_mapa
 
-# Inicializador inicial de mapeo
+# Cargar configuración inicial equilibrada al arrancar si está vacío
 maquinas_mapeadas = []
 for op in ops_activos:
     maquinas_mapeadas.extend(st.session_state.mapa_asignaciones.get(op, []))
@@ -250,14 +239,13 @@ if not maquinas_mapeadas and maquinas_activas:
     aplicar_optimizacion_maestra()
 
 # -------------------------------------------------------------------------
-# INTERFAZ CENTRAL
+# CUERPO CENTRAL DE LA APLICACIÓN
 # -------------------------------------------------------------------------
 st.markdown("## 📊 Distribución Dinámica de Células de Trabajo")
 
-# Recolección e cálculo exacto para las métricas del Head
+# Cálculo exacto e instantáneo de KPIs de planta global
 total_carga_estatica_planta = 0.0
 total_carga_caminado_planta = 0.0
-
 for op in ops_activos:
     celdas_op = st.session_state.mapa_asignaciones.get(op, [])
     total_carga_estatica_planta += sum([cargas_dinamicas_turno.get(m, 0.0) for m in celdas_op])
@@ -268,7 +256,6 @@ saturacion_promedio_planta = 0.0
 if num_operarios_vivos > 0:
     saturacion_promedio_planta = ((total_carga_estatica_planta + total_carga_caminado_planta) / num_operarios_vivos) * 100
 
-# Renderizado de KPIs en Cabecera
 with st.container(border=True):
     st.markdown("#### 📈 Resumen General de Planta (Turno Actual)")
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
@@ -283,13 +270,11 @@ with st.container(border=True):
 
 st.write("") 
 
-# --- CORRECCIÓN CRÍTICA DE COBERTURA (POKAYOKE ALERTA FANTASMA) ---
-# Recolectamos lo que está actualmente en el diccionario global antes del renderizado de inputs
+# --- SISTEMA DE VALIDACIÓN POKA-YOKE SCONCRONIZADO ---
 maquinas_asignadas_reales = []
 for op in ops_activos:
     maquinas_asignadas_reales.extend(st.session_state.mapa_asignaciones.get(op, []))
 
-# Filtrado estricto para evitar falsas alertas de celdas huérfanas
 maquinas_huerfanas = sorted(list(set(maquinas_activas) - set(maquinas_asignadas_reales)))
 
 if maquinas_huerfanas:
@@ -297,7 +282,7 @@ if maquinas_huerfanas:
 else:
     st.success("✅ Cobertura Total: Todas las celdas asignadas eficientemente.")
 
-# Renderizado de Tarjetas Simétricas
+# Generación simétrica de tarjetas de operarios
 cols_tarjetas = st.columns(4)
 for idx, operario in enumerate(LISTA_8_OPERARIOS):
     esta_disponible = st.session_state.estados_operarios.get(operario, "Disponible") == "Disponible"
@@ -310,7 +295,6 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 st.markdown("<span style='color:grey; font-style:italic;'>❌ Turno Libre / Ausencia</span>", unsafe_allow_html=True)
                 st.session_state.mapa_asignaciones[operario] = []
             else:
-                # Calcular qué celdas tienen otros compañeros para la exclusión mutua
                 celdas_ocupadas_otros = []
                 for otro_op in ops_activos:
                     if otro_op != operario:
@@ -320,7 +304,7 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 mis_celdas_actuales = [m for m in st.session_state.mapa_asignaciones.get(operario, []) if m in maquinas_activas]
                 opciones_finales_combo = sorted(list(set(opciones_disponibles_combo) | set(mis_celdas_actuales)))
 
-                # UNIFICADO A "Celdas asignadas:" con llave limpia de persistencia mutua
+                # Unificación de etiqueta fija "Celdas asignadas:" para evitar render duplicado
                 nuevas_celdas = st.multiselect(
                     "Celdas asignadas:",
                     options=opciones_finales_combo,
@@ -328,12 +312,10 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                     key=f"mselect_{operario}_v{st.session_state.sync_version}"
                 )
                 
-                # Escritura directa e inmediata en el estado de la sesión
                 if nuevas_celdas != mis_celdas_actuales:
                     st.session_state.mapa_asignaciones[operario] = nuevas_celdas
                     st.rerun()
 
-                # Cálculos basados exactamente en la selección en vivo
                 carga_estatica = sum([cargas_dinamicas_turno.get(m, 0.0) for m in nuevas_celdas])
                 carga_dinamica = calcular_carga_caminado(nuevas_celdas)
                 carga_total_real = (carga_estatica + carga_dinamica) * 100.0
@@ -341,6 +323,7 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 st.markdown(f"**Carga Estática:** {carga_estatica*100:.1f}%")
                 st.markdown(f"**Carga de Traslado:** {carga_dinamica*100:.1f}%")
                 
+                # Alertas visuales dinámicas de saturación ergonómica
                 if carga_total_real > 110.0:
                     st.error(f"💥 Carga Total Real: {carga_total_real:.1f}%")
                 elif carga_total_real > 95.0:
@@ -350,11 +333,16 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga Total Real: {carga_total_real:.1f}%")
 
+                # Alertas reactivas de combinaciones no viables
+                if "923" in nuevas_celdas and "928" in nuevas_celdas:
+                    st.error("🚨 RESTRICCIÓN: Combinación 923+928 inválida por distancia extrema.")
+                if "923" in nuevas_celdas and "911" in nuevas_celdas:
+                    st.error("🚨 RESTRICCIÓN: Combinación 923+911 inviables juntas.")
                 if "904" in nuevas_celdas and "928" in nuevas_celdas:
-                    st.error("🚨 RESTRICCIÓN: Combinación 928+904 inválida por distancia.")
+                    st.error("🚨 RESTRICCIÓN: Combinación 928+904 inválida.")
 
 # -------------------------------------------------------------------------
-# BOTONERA DE CONTROL INFERIOR
+# PANEL INFERIOR DE ACCIONES (ACCIONADORES)
 # -------------------------------------------------------------------------
 st.write("---")
 col_btn1, col_btn2 = st.columns(2)
