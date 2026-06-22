@@ -49,18 +49,17 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN ESTOCÁSTICA DE VARIANTES
+# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN Y LOGICA DE NUEVAS VARIANTES
 # -------------------------------------------------------------------------
-def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902):
+def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902, variante_923):
     if num_operarios_disponibles <= 0:
         return []
 
     bloques = [[] for _ in range(num_operarios_disponibles)]
     maquinas_por_asignar = [m for m in maquinas_trabajando]
 
-    # --- FASE 1: REPARTO BASE CON APERTURA DE DISTRIBUCIÓN ALEATORIA ---
+    # --- FASE 1: ASIGNACIONES CRÍTICAS FIJAS ---
     criticas_fijas = ["917", "924", "928"]
-    # Mezclamos el orden de inserción base para generar variantes iniciales de operarios
     random.shuffle(criticas_fijas)
     for m in criticas_fijas:
         if m in maquinas_por_asignar:
@@ -68,19 +67,25 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
             bloques[idx_destino].append(m)
             maquinas_por_asignar.remove(m)
 
-    # Bloque Técnico Mecánico (916 + 904)
+    # --- FASE 2: BLOQUE TÉCNICO MECÁNICO CON CONDICIONAL "MONTAJE PLUG" ---
     bloque_mecanico = []
-    for m in ["916", "904"]:
+    elementos_mecanicos = ["916", "904"]
+    
+    # OBJETIVO: Si es Montaje Plug, la 923 se une forzosamente a la 916 y 904
+    if variante_923 == "Montaje Plug (20.0%)" and "923" in maquinas_por_assignar:
+        elementos_mecanicos.append("923")
+
+    for m in elementos_mecanicos:
         if m in maquinas_por_asignar:
             bloque_mecanico.append(m)
             maquinas_por_asignar.remove(m)
+            
     if bloque_mecanico:
         idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
         bloques[idx_destino].extend(bloque_mecanico)
 
-    # REGLA ESTRATÉGICA VARIANT DE CÁNULAS
+    # --- FASE 3: REGLAS GEOGRÁFICAS DE LA MAQUINA 902 ---
     if variante_902 == "Cánula Corta (37.1%)":
-        # Bloque Poka-Yoke: En Cánula Corta, 902 va forzosamente unida con la 927
         par_corto = []
         for m in ["902", "927"]:
             if m in maquinas_por_asignar:
@@ -104,14 +109,14 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
                 bloques[idx_destino].extend(existentes)
                 for m in existentes: maquinas_por_asignar.remove(m)
 
+    # Flanco pasillo izquierdo
     izquierdas = [m for m in ["922", "911", "905"] if m in maquinas_por_asignar]
     if izquierdas:
         idx_destino = min(range(num_operarios_disponibles), key=lambda i: sum([cargas_activas[x] for x in bloques[i]]))
         bloques[idx_destino].extend(izquierdas)
         for m in izquierdas: maquinas_por_asignar.remove(m)
 
-    # --- FASE 2: REPARTO DINÁMICO DE REMANENTES CON SELECCIÓN DE RULETA (PROPUESTAS VARIADAS) ---
-    # Introducir un ligero desorden controlado en el remanente para romper la linealidad
+    # --- FASE 4: REPARTO DINÁMICO ALEATORIZADO DE REMANENTES (POKA-YOKE VETOS) ---
     random.shuffle(maquinas_por_asignar)
     
     for m in list(maquinas_por_asignar):
@@ -120,9 +125,11 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         for idx in range(num_operarios_disponibles):
             blk = bloques[idx]
             
-            # Control de Vetos Inviolables (Poka-Yoke)
-            if m == "923" and ("928" in blk or "911" in blk): continue
-            if "923" in blk and (m == "928" or m == "911"): continue
+            # Si NO estamos en montaje plug, mantenemos las restricciones duras estables de la 923
+            if variante_923 != "Montaje Plug (20.0%)":
+                if m == "923" and ("928" in blk or "911" in blk): continue
+                if "923" in blk and (m == "928" or m == "911"): continue
+                
             if m == "904" and "928" in blk: continue
             if m == "928" and "904" in blk: continue
 
@@ -135,22 +142,21 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
                 candidatos_viables.append((idx, carga_total))
                     
         if candidatos_viables:
-            # Ordenamos los candidatos de menor a mayor carga total resultante
             candidatos_viables.sort(key=lambda x: x[1])
-            # Tomamos hasta las 3 mejores opciones y elegimos una aleatoriamente para variar la propuesta
             mejores_opciones = candidatos_viables[:3]
             idx_seleccionado = random.choice(mejores_opciones)[0]
             
             bloques[idx_seleccionado].append(m)
             maquinas_por_asignar.remove(m)
 
-    # --- FASE 3: FORZADO DE SEGURIDAD PARA HÚERFANAS CRÍTICAS ---
+    # --- FASE 5: REPARTO ANTI-HUÉRFANAS ---
     for m in list(maquinas_por_asignar):
         valid_indices = []
         for idx in range(num_operarios_disponibles):
             blk = bloques[idx]
-            if m == "923" and ("928" in blk or "911" in blk): continue
-            if "923" in blk and (m == "928" or m == "911"): continue
+            if variante_923 != "Montaje Plug (20.0%)":
+                if m == "923" and ("928" in blk or "911" in blk): continue
+                if "923" in blk and (m == "928" or m == "911"): continue
             valid_indices.append(idx)
             
         target_indices = valid_indices if valid_indices else list(range(num_operarios_disponibles))
@@ -158,9 +164,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         bloques[idx_destino].append(m)
         maquinas_por_asignar.remove(m)
 
-    # Limpieza final y reordenamiento estético
     resultado = [sorted(b) for b in bloques if b]
-    # Mezclamos la asignación a nivel de tarjetas para que no se asigne siempre el mismo bloque al Operario 1
     random.shuffle(resultado)
     return resultado
 
@@ -171,11 +175,15 @@ st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
 
 if "version_902" not in st.session_state:
     st.session_state.version_902 = "Cánula Corta (37.1%)"
+if "version_923" not in st.session_state:
+    st.session_state.version_923 = "Estándar (70.0%)"
 if "sync_version" not in st.session_state:
     st.session_state.sync_version = 0
 
+# Modificación dinámica de workloads según selectores
 cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
 cargas_dinamicas_turno["902"] = 0.4500 if st.session_state.version_902 == "Cánula Larga (45.0%)" else 0.3712
+cargas_dinamicas_turno["923"] = 0.2000 if st.session_state.version_923 == "Montaje Plug (20.0%)" else 0.7000
 
 if "estados_maquinas" not in st.session_state:
     st.session_state.estados_maquinas = {m: "Trabajando" for m in cargas_dinamicas_turno.keys()}
@@ -199,13 +207,26 @@ with st.sidebar:
     st.markdown("### 🏃 Ergonómico: **1.2 m/s**")
     st.markdown("---")
     
-    version_sel = st.selectbox(
-        "M-902 - Tipo de Cánula:", 
+    st.markdown("### 🧬 Variantes de Producto")
+    # Selector de variante para 902
+    v902_sel = st.selectbox(
+        "M-902 (Cánula):", 
         options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], 
         index=0 if st.session_state.version_902 == "Cánula Corta (37.1%)" else 1
     )
-    if version_sel != st.session_state.version_902:
-        st.session_state.version_902 = version_sel
+    if v902_sel != st.session_state.version_902:
+        st.session_state.version_902 = v902_sel
+        st.session_state.sync_version += 1
+        st.rerun()
+
+    # NUEVO Selector de variante para 923
+    v923_sel = st.selectbox(
+        "M-923 (Montaje):",
+        options=["Estándar (70.0%)", "Montaje Plug (20.0%)"],
+        index=0 if st.session_state.version_923 == "Estándar (70.0%)" else 1
+    )
+    if v923_sel != st.session_state.version_923:
+        st.session_state.version_923 = v923_sel
         st.session_state.sync_version += 1
         st.rerun()
 
@@ -239,7 +260,10 @@ with st.sidebar:
             st.rerun()
 
 def aplicar_optimizacion_maestra():
-    bloques_optimos = optimizar_celdas_abstractas(maquinas_activas, len(ops_activos), cargas_dinamicas_turno, st.session_state.version_902)
+    bloques_optimos = optimizar_celdas_abstractas(
+        maquinas_activas, len(ops_activos), cargas_dinamicas_turno, 
+        st.session_state.version_902, st.session_state.version_923
+    )
     nuevo_mapa = {op: [] for op in LISTA_8_OPERARIOS}
     for idx, op in enumerate(ops_activos):
         if idx < len(bloques_optimos):
@@ -279,7 +303,8 @@ with st.container(border=True):
     with col_kpi3:
         st.metric("Saturación Promedio Planta", f"{saturacion_promedio_planta:.1f}%")
     with col_kpi4:
-        st.metric("Variante M-902", "CORTA" if st.session_state.version_902 == "Cánula Corta (37.1%)" else "LARGA")
+        st.markdown(f"**M-902:** {'CORTA' if st.session_state.version_902 == 'Cánula Corta (37.1%)' else 'LARGA'}")
+        st.markdown(f"**M-923:** {'PLUG (20%)' if st.session_state.version_923 == 'Montaje Plug (20.0%)' else 'ESTÁNDAR (70%)'}")
 
 st.write("") 
 
@@ -342,10 +367,16 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga Total Real: {carga_total_real:.1f}%")
 
-                if "923" in nuevas_celdas and "928" in nuevas_celdas:
-                    st.error("🚨 RESTRICCIÓN: Combinación 923+928 inválida por distancia extrema.")
-                if "923" in nuevas_celdas and "911" in nuevas_celdas:
-                    st.error("🚨 RESTRICCIÓN: Combinación 923+911 inviables juntas.")
+                # Mensajes dinámicos de control e incompatibilidades
+                if "923" in nuevas_celdas and st.session_state.version_923 == "Montaje Plug (20.0%)":
+                    st.caption("📦 *Celda 923 configurada en modo Montaje Plug*")
+                
+                if st.session_state.version_923 != "Montaje Plug (20.0%)":
+                    if "923" in nuevas_celdas and "928" in nuevas_celdas:
+                        st.error("🚨 RESTRICCIÓN: Combinación 923+928 inválida por distancia extrema.")
+                    if "923" in nuevas_celdas and "911" in nuevas_celdas:
+                        st.error("🚨 RESTRICCIÓN: Combinación 923+911 inviables juntas.")
+                        
                 if "904" in nuevas_celdas and "928" in nuevas_celdas:
                     st.error("🚨 RESTRICCIÓN: Combinación 928+904 inválida.")
 
