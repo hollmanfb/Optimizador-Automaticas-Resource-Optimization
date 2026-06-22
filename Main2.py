@@ -49,7 +49,7 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN Y LOGICA DE NUEVAS VARIANTES
+# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN Y LÓGICA DE VARIANTES CORREGIDA
 # -------------------------------------------------------------------------
 def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902, variante_923):
     if num_operarios_disponibles <= 0:
@@ -71,8 +71,8 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
     bloque_mecanico = []
     elementos_mecanicos = ["916", "904"]
     
-    # OBJETIVO: Si es Montaje Plug, la 923 se une forzosamente a la 916 y 904
-    if variante_923 == "Montaje Plug (20.0%)" and "923" in maquinas_por_assignar:
+    # CORREGIDO: Se cambió 'maquinas_por_assignar' por la variable correcta 'maquinas_por_asignar'
+    if variante_923 == "Montaje Plug (20.0%)" and "923" in maquinas_por_asignar:
         elementos_mecanicos.append("923")
 
     for m in elementos_mecanicos:
@@ -116,7 +116,7 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         bloques[idx_destino].extend(izquierdas)
         for m in izquierdas: maquinas_por_asignar.remove(m)
 
-    # --- FASE 4: REPARTO DINÁMICO ALEATORIZADO DE REMANENTES (POKA-YOKE VETOS) ---
+    # --- FASE 4: REPARTO DINÁMICO ALEATORIZADO DE REMANENTES ---
     random.shuffle(maquinas_por_asignar)
     
     for m in list(maquinas_por_asignar):
@@ -125,7 +125,6 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
         for idx in range(num_operarios_disponibles):
             blk = bloques[idx]
             
-            # Si NO estamos en montaje plug, mantenemos las restricciones duras estables de la 923
             if variante_923 != "Montaje Plug (20.0%)":
                 if m == "923" and ("928" in blk or "911" in blk): continue
                 if "923" in blk and (m == "928" or m == "911"): continue
@@ -180,7 +179,6 @@ if "version_923" not in st.session_state:
 if "sync_version" not in st.session_state:
     st.session_state.sync_version = 0
 
-# Modificación dinámica de workloads según selectores
 cargas_dinamicas_turno = WORKLOAD_MAESTRO_BASE.copy()
 cargas_dinamicas_turno["902"] = 0.4500 if st.session_state.version_902 == "Cánula Larga (45.0%)" else 0.3712
 cargas_dinamicas_turno["923"] = 0.2000 if st.session_state.version_923 == "Montaje Plug (20.0%)" else 0.7000
@@ -208,7 +206,6 @@ with st.sidebar:
     st.markdown("---")
     
     st.markdown("### 🧬 Variantes de Producto")
-    # Selector de variante para 902
     v902_sel = st.selectbox(
         "M-902 (Cánula):", 
         options=["Cánula Corta (37.1%)", "Cánula Larga (45.0%)"], 
@@ -219,7 +216,6 @@ with st.sidebar:
         st.session_state.sync_version += 1
         st.rerun()
 
-    # NUEVO Selector de variante para 923
     v923_sel = st.selectbox(
         "M-923 (Montaje):",
         options=["Estándar (70.0%)", "Montaje Plug (20.0%)"],
@@ -367,7 +363,6 @@ for idx, operario in enumerate(LISTA_8_OPERARIOS):
                 else:
                     st.success(f"⚡ Carga Total Real: {carga_total_real:.1f}%")
 
-                # Mensajes dinámicos de control e incompatibilidades
                 if "923" in nuevas_celdas and st.session_state.version_923 == "Montaje Plug (20.0%)":
                     st.caption("📦 *Celda 923 configurada en modo Montaje Plug*")
                 
