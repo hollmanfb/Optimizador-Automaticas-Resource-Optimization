@@ -49,7 +49,7 @@ def calcular_carga_caminado(lista_maquinas):
     return (np.mean(distancias) / VELOCIDAD_CAMINADO * FRECUENCIA_TRASLADOS_HORA) / 3600.0
 
 # -------------------------------------------------------------------------
-# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN Y LÓGICA DE VARIANTES CORREGIDA
+# MOTOR DE OPTIMIZACIÓN CON EXPLORACIÓN Y LÓGICA DE VARIANTES
 # -------------------------------------------------------------------------
 def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, cargas_activas, variante_902, variante_923):
     if num_operarios_disponibles <= 0:
@@ -71,7 +71,6 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
     bloque_mecanico = []
     elementos_mecanicos = ["916", "904"]
     
-    # CORREGIDO: Se cambió 'maquinas_por_assignar' por la variable correcta 'maquinas_por_asignar'
     if variante_923 == "Montaje Plug (20.0%)" and "923" in maquinas_por_asignar:
         elementos_mecanicos.append("923")
 
@@ -171,6 +170,66 @@ def optimizar_celdas_abstractas(maquinas_trabajando, num_operarios_disponibles, 
 # INTERFAZ DE CONTROL CENTRALIZADA (STREAMLIT)
 # -------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Planificador de Cargas medmix")
+
+# 🖨️ INYECCIÓN DE CSS EXCLUSIVO PARA IMPRESIÓN (FORZADO A 1 HOJA DINÁMICA)
+st.markdown("""
+    <style>
+    @media print {
+        /* Ocultar barra lateral de control, botones, headers de Streamlit y menús */
+        [data-testid="stSidebar"], 
+        footer, 
+        header,
+        .stButton,
+        [data-testid="stFormSubmitButton"],
+        iframe {
+            display: none !important;
+        }
+        
+        /* Ajustar los contenedores generales para aprovechar el 100% de la hoja */
+        .main .block-container {
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
+            padding-left: 20px !important;
+            padding-right: 20px !important;
+            max-width: 100% !important;
+        }
+        
+        /* Forzar que las tarjetas de operarios se mantengan en filas horizontales compactas */
+        [data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            gap: 10px !important;
+        }
+        
+        [data-testid="stColumn"] {
+            flex: 1 1 22% !important; /* Mantiene 4 columnas por fila en la hoja */
+            min-width: 180px !important;
+        }
+        
+        /* Achicar levemente los textos e inputs bloqueados para ahorrar espacio vertical */
+        h2, h3, h4 {
+            margin-top: 4px !important;
+            margin-bottom: 4px !important;
+            font-size: 1.1rem !important;
+        }
+        
+        p, span, div {
+            font-size: 11px !important;
+        }
+
+        .stMultiSelect div {
+            padding: 2px !important;
+        }
+        
+        /* Evitar saltos de página dentro del reporte */
+        body, .main {
+            page-break-inside: avoid !important;
+            background-color: white !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 if "version_902" not in st.session_state:
     st.session_state.version_902 = "Cánula Corta (37.1%)"
